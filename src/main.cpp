@@ -7,19 +7,13 @@
 #include <openssl/sha.h>
 #include <iomanip>
 #include <vector>
+#include <algorithm>
+#include <ctime>
 
 struct TreeEntry {
     std::string mode;
     std::string hash;
     std::string filename;
-};
-
-struct Commit {
-    std::string treeHash;
-    std::string parentHash;
-    std::string message;
-    std::string commiterName;
-    std::string commiterEmail;
 };
 
 
@@ -51,10 +45,17 @@ std::string binaryToHexString(const std::string& binary) {
     return hexString;
 }
 
-std::string writeBlob(const std::string& content) {
-    // blob <size>\0<content>
-    std::string formattedContent = "blob " + std::to_string(content.size()) + '\0' + content;
+// Helper function to get object file path
+std::string getObjectPath(const std::string& hash) {
+    return ".git/objects/" + hash.substr(0, 2) + "/" + hash.substr(2);
+}
 
+// Common object writing function
+std::string writeObject(const std::string& type, const std::string& content) {
+    // Format: <type> <size>\0<content>
+    std::string formattedContent = type + " " + std::to_string(content.size()) + '\0' + content;
+
+    // Calculate SHA-1 hash
     unsigned char hash[SHA_DIGEST_LENGTH];
     SHA1(reinterpret_cast<const unsigned char*>(formattedContent.data()), 
          formattedContent.size(), 
@@ -77,7 +78,7 @@ std::string writeBlob(const std::string& content) {
     std::string saveDir = ".git/objects/" + hashString.substr(0, 2);
     std::filesystem::create_directories(saveDir);
     
-    std::string saveFile = saveDir + "/" + hashString.substr(2);
+    std::string saveFile = getObjectPath(hashString);
     std::ofstream saveFileStream(saveFile, std::ios::binary);
     if (!saveFileStream.is_open()) {
         std::cerr << "Failed to create save file.\n";
@@ -88,6 +89,10 @@ std::string writeBlob(const std::string& content) {
     saveFileStream.close();
     
     return hashString;
+}
+
+std::string writeBlob(const std::string& content) {
+    return writeObject("blob", content);
 }
 
 std::string writeTree(const std::string& directoryPath) {
@@ -130,37 +135,7 @@ std::string writeTree(const std::string& directoryPath) {
         treeContent += hexStringToBinary(entry.hash);
     }
     
-    // tree <size>\0<content>
-    std::string formattedContent = "tree " + std::to_string(treeContent.size()) + '\0' + treeContent;
-    
-    unsigned char hash[SHA_DIGEST_LENGTH];
-    SHA1(reinterpret_cast<const unsigned char*>(formattedContent.data()), 
-         formattedContent.size(), 
-         hash);
-    
-    std::string hashString = hashToHexString(hash);
-    
-    uLong compressedSize = compressBound(formattedContent.size());
-    std::string compressedContent(compressedSize, 0);
-    
-    int compressResult = compress(reinterpret_cast<Bytef*>(&compressedContent[0]), &compressedSize,
-                                reinterpret_cast<const Bytef*>(formattedContent.data()), 
-                                formattedContent.size());
-    if (compressResult != Z_OK) return "";
-    
-    compressedContent.resize(compressedSize);
-    
-    std::string saveDir = ".git/objects/" + hashString.substr(0, 2);
-    std::filesystem::create_directories(saveDir);
-    
-    std::string saveFile = saveDir + "/" + hashString.substr(2);
-    std::ofstream saveFileStream(saveFile, std::ios::binary);
-    if (!saveFileStream.is_open()) return "";
-    
-    saveFileStream.write(compressedContent.data(), compressedContent.size());
-    saveFileStream.close();
-    
-    return hashString;
+    return writeObject("tree", treeContent);
 }
 
 std::string decompressObject(const std::string& compressedContent) {
@@ -199,6 +174,38 @@ std::string decompressObject(const std::string& compressedContent) {
     return decompressedContent;
 }
 
+// Read and decompress an object by hash
+std::string readObject(const std::string& hash) {
+    std::string objectPath = getObjectPath(hash);
+    
+    std::ifstream objectFile(objectPath, std::ios::binary);
+    if (!objectFile.is_open()) {
+        std::cerr << "Object not found: " << hash << '\n';
+        return "";
+    }
+
+    std::stringstream objectStream;
+    objectStream << objectFile.rdbuf();
+    std::string compressedContent = objectStream.str();
+
+    return decompressObject(compressedContent);
+}
+
+// Read object content (without header)
+std::string readObjectContent(const std::string& hash) {
+    std::string decompressedContent = readObject(hash);
+    if (decompressedContent.empty()) {
+        return "";
+    }
+    
+    // Extract content after the null byte
+    size_t nullPos = decompressedContent.find('\0');
+    if (nullPos != std::string::npos) {
+        return decompressedContent.substr(nullPos + 1);
+    }
+    return decompressedContent;
+}
+
 std::string writeCommit(const std::string& treeHash, const std::string& parentHash, 
                        const std::string& message, const std::string& author, 
                        const std::string& email) {
@@ -211,53 +218,409 @@ std::string writeCommit(const std::string& treeHash, const std::string& parentHa
     content += "committer " + author + " <" + email + "> " + std::to_string(std::time(nullptr)) + "\n\n";
     content += message + "\n";
     
-    // Use same pattern as writeBlob/writeTree
-    std::string formattedContent = "commit " + std::to_string(content.size()) + '\0' + content;
-    
-    unsigned char hash[SHA_DIGEST_LENGTH];
-    SHA1(reinterpret_cast<const unsigned char*>(formattedContent.data()), 
-         formattedContent.size(), 
-         hash);
-    
-    std::string hashString = hashToHexString(hash);
-    
-    uLong compressedSize = compressBound(formattedContent.size());
-    std::string compressedContent(compressedSize, 0);
-    
-    int compressResult = compress(reinterpret_cast<Bytef*>(&compressedContent[0]), &compressedSize,
-                                reinterpret_cast<const Bytef*>(formattedContent.data()), 
-                                formattedContent.size());
-    if (compressResult != Z_OK) {
-        std::cerr << "Compression failed\n";
-        return "";
-    }
-    compressedContent.resize(compressedSize);
-    
-    std::string saveDir = ".git/objects/" + hashString.substr(0, 2);
-    std::filesystem::create_directories(saveDir);
-    
-    std::string saveFile = saveDir + "/" + hashString.substr(2);
-    std::ofstream saveFileStream(saveFile, std::ios::binary);
-    if (!saveFileStream.is_open()) {
-        std::cerr << "Failed to create save file.\n";
-        return "";
-    }
-
-    saveFileStream.write(compressedContent.data(), compressedContent.size());
-    saveFileStream.close();
-    
-    return hashString;
+    return writeObject("commit", content);
 }
 
+std::string readHead() {
+    std::ifstream headFile(".git/HEAD");
+    if (!headFile.is_open()) {
+        return ""; // no head file exists (first commit)
+    }
+    
+    std::string headContent;
+    std::getline(headFile, headContent);
+    headFile.close();
+    
+    // Handle both formats:
+    // 1. "ref: refs/heads/main" (branch reference)
+    // 2. "a1b2c3d4e5f6..." (direct commit hash)
+    
+    if (headContent.substr(0, 5) == "ref: ") {
+        // branch reference, read the actual commit hash
+        std::string refPath = ".git/" + headContent.substr(5);
+        std::ifstream refFile(refPath);
+        if (!refFile.is_open()) {
+            return ""; // branch file doesn't exist yet (first commit)
+        }
+        
+        std::string commitHash;
+        std::getline(refFile, commitHash);
+        refFile.close();
+        return commitHash;
+    } else {
+        // direct commit hash
+        return headContent;
+    }
+}
 
-int main(int argc, char *argv[])
-{
-    // Flush after every std::cout / std::cerr
+// Write the HEAD to point to a specific commit
+bool writeHead(const std::string& commitHash) {
+    // For now, we'll use the simple format: direct commit hash
+    // Later we can add branch support
+    std::ofstream headFile(".git/HEAD");
+    if (!headFile.is_open()) {
+        std::cerr << "Failed to write HEAD file\n";
+        return false;
+    }
+    
+    headFile << commitHash << '\n';
+    headFile.close();
+    return true;
+}
+
+// Alternative: Write HEAD as a branch reference (more Git-like)
+bool writeHeadAsBranch(const std::string& commitHash, const std::string& branchName = "main") {
+    // Write the commit hash to the branch file
+    std::string branchPath = ".git/refs/heads/" + branchName;
+    std::filesystem::create_directories(".git/refs/heads");
+    
+    std::ofstream branchFile(branchPath);
+    if (!branchFile.is_open()) {
+        std::cerr << "Failed to write branch file\n";
+        return false;
+    }
+    
+    branchFile << commitHash << '\n';
+    branchFile.close();
+    
+    // Write HEAD to point to the branch
+    std::ofstream headFile(".git/HEAD");
+    if (!headFile.is_open()) {
+        std::cerr << "Failed to write HEAD file\n";
+        return false;
+    }
+    
+    headFile << "ref: refs/heads/" << branchName << '\n';
+    headFile.close();
+    return true;
+}
+
+// Parse a commit object and extract its components
+struct CommitInfo {
+    std::string hash;
+    std::string treeHash;
+    std::string parentHash;
+    std::string author;
+    std::string message;
+    std::string timestamp;
+};
+
+CommitInfo parseCommit(const std::string& commitHash) {
+    CommitInfo info;
+    info.hash = commitHash;
+    
+    std::string content = readObjectContent(commitHash);
+    if (content.empty()) {
+        return info;
+    }
+    
+    std::istringstream stream(content);
+    std::string line;
+    
+    while (std::getline(stream, line)) {
+        if (line.substr(0, 5) == "tree ") {
+            info.treeHash = line.substr(5);
+        } else if (line.substr(0, 7) == "parent ") {
+            info.parentHash = line.substr(7);
+        } else if (line.substr(0, 7) == "author ") {
+            // Parse author line: "author Name <email> timestamp"
+            size_t emailStart = line.find('<');
+            size_t emailEnd = line.find('>');
+            if (emailStart != std::string::npos && emailEnd != std::string::npos) {
+                info.author = line.substr(7, emailStart - 7 - 1); // Remove "author " and space before <
+                size_t timestampStart = emailEnd + 2; // Skip "> "
+                if (timestampStart < line.length()) {
+                    info.timestamp = line.substr(timestampStart);
+                }
+            }
+        } else if (line.substr(0, 10) == "committer ") {
+            // Skip committer line for now
+        } else if (line.empty()) {
+            // Empty line separates headers from message
+            // Read the rest as the commit message
+            std::string message;
+            while (std::getline(stream, line)) {
+                if (!message.empty()) message += '\n';
+                message += line;
+            }
+            info.message = message;
+            break;
+        }
+    }
+    
+    return info;
+}
+
+// Convert Unix timestamp to readable format
+std::string formatTimestamp(const std::string& timestamp) {
+    if (timestamp.empty()) return "";
+    
+    try {
+        time_t time = std::stol(timestamp);
+        char buffer[100];
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", std::localtime(&time));
+        return std::string(buffer);
+    } catch (...) {
+        return timestamp; // Return original if parsing fails
+    }
+}
+
+// Command handler functions
+bool handleInit() {
+    try {
+        std::filesystem::create_directory(".git");
+        std::filesystem::create_directory(".git/objects");
+        std::filesystem::create_directory(".git/refs");
+        std::filesystem::create_directory(".git/refs/heads");
+
+        // Initialize HEAD to point to main branch (but no commits yet)
+        std::ofstream headFile(".git/HEAD");
+        if (headFile.is_open()) {
+            headFile << "ref: refs/heads/main\n";
+            headFile.close();
+        } else {
+            std::cerr << "Failed to create .git/HEAD file.\n";
+            return false;
+        }
+
+        std::cout << "Initialized vit directory\n";
+        return true;
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << e.what() << '\n';
+        return false;
+    }
+}
+
+bool handleCatFile(int argc, char *argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage: cat-file -p <hash>\n";
+        return false;
+    }
+    
+    std::string flag = argv[2];
+    if (flag != "-p") {
+        std::cerr << "Unknown flag: " << flag << '\n';
+        return false;
+    }
+
+    std::string objectHash = argv[3];
+    std::string content = readObjectContent(objectHash);
+    if (content.empty()) {
+        return false;
+    }
+    
+    std::cout << content;
+    return true;
+}
+
+bool handleHashObject(int argc, char *argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage: hash-object -w <file>\n";
+        return false;
+    }
+    
+    std::string flag = argv[2];
+    if (flag != "-w") {
+        std::cerr << "Unknown flag: " << flag << '\n';
+        return false;
+    }
+
+    std::string file = argv[3];
+    std::ifstream fileStream(file);
+    if (!fileStream.is_open()) {
+        std::cerr << "Failed to open file: " << file << '\n';
+        return false;
+    }
+    
+    std::stringstream contentStream;
+    contentStream << fileStream.rdbuf();
+    std::string fileContent = contentStream.str();
+
+    std::string hashString = writeBlob(fileContent);
+    if (hashString.empty()) {
+        return false;
+    }
+    
+    std::cout << hashString << '\n';
+    return true;
+}
+
+bool handleLsTree(int argc, char *argv[]) {
+    if (argc < 4) {
+        std::cerr << "Usage: ls-tree <hash> [--name-only|-l]\n";
+        return false;
+    }
+    
+    std::string flag = argv[3];
+    bool nameOnly = (flag == "--name-only");
+    if (flag != "--name-only" && flag != "-l") {
+        std::cerr << "Unknown flag: " << flag << '\n';
+        return false;
+    }
+    
+    std::string treeHash = argv[2];
+    std::string decompressedContent = readObject(treeHash);
+    if (decompressedContent.empty()) {
+        return false;
+    }
+
+    // Parse tree object format
+    size_t nullPos = decompressedContent.find('\0');
+    if (nullPos == std::string::npos) {
+        std::cerr << "Invalid tree format\n";
+        return false;
+    }
+    
+    // Skip header
+    size_t pos = nullPos + 1;
+    
+    while (pos < decompressedContent.size()) {
+        // Find next null byte (end of current entry)
+        size_t nextNull = decompressedContent.find('\0', pos);
+        if (nextNull == std::string::npos) break;
+        
+        // Extract the entry (mode + name)
+        std::string entry = decompressedContent.substr(pos, nextNull - pos);
+        
+        // Find the last space (separates mode from name)
+        size_t lastSpace = entry.find_last_of(' ');
+        if (lastSpace != std::string::npos) {
+            std::string mode = entry.substr(0, lastSpace);
+            std::string filename = entry.substr(lastSpace + 1);
+            
+            if (nameOnly) {
+                std::cout << filename << '\n';
+            } else {
+                // Extract hash (20 bytes after null)
+                std::string binaryHash = decompressedContent.substr(nextNull + 1, 20);
+                std::string hashHex = binaryToHexString(binaryHash);
+                
+                std::string type = (mode.substr(0, 3) == "400") ? "tree" : "blob";
+                
+                std::cout << mode << " " << type << " " << hashHex << "\t" << filename << '\n';
+            }
+        }
+        
+        // Skip the hash (20 bytes) and move to next entry
+        pos = nextNull + 1 + 20;
+    }
+    
+    return true;
+}
+
+bool handleWriteTree() {
+    std::string hashString = writeTree(".");
+    if (hashString.empty()) {
+        std::cerr << "Failed to write tree\n";
+        return false;
+    }
+    std::cout << hashString << '\n';
+    return true;
+}
+
+bool handleCommitTree(int argc, char *argv[]) {
+    if (argc < 7) {
+        std::cerr << "Usage: commit-tree <tree_sha> -p <commit_sha> -m <message>\n";
+        return false;
+    }
+
+    std::string treeHash = argv[2];
+    std::string parentHash = argv[4];  // -p flag
+    std::string message = argv[6];     // -m flag
+    
+    std::string author = "Vincent Schacknies";
+    std::string email = "vincent.schacknies@icloud.com";
+
+    std::string commitHash = writeCommit(treeHash, parentHash, message, author, email);
+    if (commitHash.empty()) {
+        std::cerr << "Failed to create commit\n";
+        return false;
+    }
+    
+    std::cout << commitHash << '\n';
+    return true;
+}
+
+bool handleCommit(int argc, char *argv[]) {
+    if (argc < 3) {
+        std::cerr << "Usage: commit -m <message>\n";
+        return false;
+    }
+    
+    std::string flag = argv[2];
+    if (flag != "-m") {
+        std::cerr << "Usage: commit -m <message>\n";
+        return false;
+    }
+    
+    std::string message = argv[3];
+    
+    std::string treeHash = writeTree(".");
+    if (treeHash.empty()) {
+        std::cerr << "Failed to create tree\n";
+        return false;
+    }
+    
+    std::string parentHash = readHead();
+    
+    std::string author = "Vincent Schacknies";
+    std::string email = "vincent.schacknies@icloud.com";
+    
+    std::string commitHash = writeCommit(treeHash, parentHash, message, author, email);
+    if (commitHash.empty()) {
+        std::cerr << "Failed to create commit\n";
+        return false;
+    }
+    
+    writeHead(commitHash);
+    
+    std::cout << "Created commit " << commitHash << '\n';
+    return true;
+}
+
+bool handleShowHead() {
+    std::string headHash = readHead();
+    if (headHash.empty()) {
+        std::cout << "No commits yet\n";
+    } else {
+        std::cout << "HEAD: " << headHash << '\n';
+    }
+    return true;
+}
+
+bool handleLog() {
+    std::string currentHash = readHead();
+    if (currentHash.empty()) {
+        std::cout << "No commits yet\n";
+        return true;
+    }
+    
+    // Walk through commit history
+    while (!currentHash.empty()) {
+        CommitInfo commit = parseCommit(currentHash);
+        if (commit.hash.empty()) {
+            std::cerr << "Failed to parse commit: " << currentHash << '\n';
+            break;
+        }
+        
+        // Print commit information
+        std::cout << "commit " << commit.hash << '\n';
+        std::cout << "Author: " << commit.author << '\n';
+        std::cout << "Date:   " << formatTimestamp(commit.timestamp) << '\n';
+        std::cout << '\n';
+        std::cout << "    " << commit.message << '\n';
+        std::cout << '\n';
+        
+        // Move to parent commit
+        currentHash = commit.parentHash;
+    }
+    
+    return true;
+}
+
+int main(int argc, char *argv[]) {
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
-
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    std::cerr << "Logs from your program will appear here!\n";
 
     if (argc < 2) {
         std::cerr << "No command provided.\n";
@@ -265,187 +628,30 @@ int main(int argc, char *argv[])
     }
     
     std::string command = argv[1];
+    bool success = false;
     
     if (command == "init") {
-        try {
-            std::filesystem::create_directory(".git");
-            std::filesystem::create_directory(".git/objects");
-            std::filesystem::create_directory(".git/refs");
-    
-            std::ofstream headFile(".git/HEAD");
-            if (headFile.is_open()) {
-                headFile << "ref: refs/heads/main\n";
-                headFile.close();
-            } else {
-                std::cerr << "Failed to create .git/HEAD file.\n";
-                return EXIT_FAILURE;
-            }
-    
-            std::cout << "Initialized vit directory\n";
-        } catch (const std::filesystem::filesystem_error& e) {
-            std::cerr << e.what() << '\n';
-            return EXIT_FAILURE;
-        }
+        success = handleInit();
     } else if (command == "cat-file") {
-        if (argc < 3) {
-            std::cerr << "No object hash provided.\n";
-            return EXIT_FAILURE;
-        }
-        std::string flag = argv[2];
-        if (flag != "-p") {
-            std::cerr << "Unknown flag: " << flag << '\n';
-            return EXIT_FAILURE;
-        } // TODO: add pretty print functionality and other flags
-
-        std::string objectHash = argv[3];
-        std::string objectPath = ".git/objects/" + objectHash.substr(0, 2) + "/" + objectHash.substr(2);
-
-        std::ifstream objectFile(objectPath, std::ios::binary);
-        if (!objectFile.is_open()) {
-            std::cerr << "Object file not found.\n";
-            return EXIT_FAILURE;
-        }
-
-        std::stringstream objectStream;
-        objectStream << objectFile.rdbuf();
-        std::string objectContent = objectStream.str();
-
-        std::string decompressedContent = decompressObject(objectContent);
-        
-        // only print content not header
-        size_t nullPos = decompressedContent.find('\0');
-        if (nullPos != std::string::npos) {
-            std::string content = decompressedContent.substr(nullPos + 1);
-            std::cout << content;
-        } else {
-            std::cout << decompressedContent;
-        }
+        success = handleCatFile(argc, argv);
     } else if (command == "hash-object") {
-        if (argc < 3) {
-            std::cerr << "No object content provided.\n";
-            return EXIT_FAILURE;
-        }
-        std::string flag = argv[2];
-        if (flag != "-w") {
-            std::cerr << "Unknown flag: " << flag << '\n';
-            return EXIT_FAILURE;
-        } // TODO: add flag functionality
-
-        std::string file = argv[3];
-        std::ifstream fileStream(file);
-        if (!fileStream.is_open()) {
-            std::cerr << "Failed to open file: " << file << '\n';
-            return EXIT_FAILURE;
-        }
-        
-        std::stringstream contentStream;
-        contentStream << fileStream.rdbuf();
-        std::string fileContent = contentStream.str();
-
-        std::string hashString = writeBlob(fileContent);
-        if (hashString.empty()) {
-            return EXIT_FAILURE;
-        }
-        
-        std::cout << hashString << '\n';
+        success = handleHashObject(argc, argv);
     } else if (command == "ls-tree") {
-        if (argc < 3) {
-            std::cerr << "No tree hash provided.\n";
-            return EXIT_FAILURE;
-        }
-        std::string flag = argv[2];
-        bool nameOnly = (flag == "--name-only");
-        if (flag != "--name-only" && flag != "-l") {
-            std::cerr << "Unknown flag: " << flag << '\n';
-            return EXIT_FAILURE;
-        }
-        std::string treeHash = argv[3];
-        std::string treePath = ".git/objects/" + treeHash.substr(0, 2) + "/" + treeHash.substr(2);
-
-        std::ifstream treeFile(treePath, std::ios::binary);
-        if (!treeFile.is_open()) {
-            std::cerr << "Tree file not found.\n";
-            return EXIT_FAILURE;
-        }
-        
-        std::stringstream treeStream;
-        treeStream << treeFile.rdbuf();
-        std::string treeContent = treeStream.str(); // still compressed
-
-        std::string decompressedContent = decompressObject(treeContent);
-
-        // parse tree object format
-        size_t nullPos = decompressedContent.find('\0');
-        if (nullPos == std::string::npos) {
-            std::cerr << "Invalid tree format\n";
-            return EXIT_FAILURE;
-        }
-        
-        // Skip header
-        size_t pos = nullPos + 1;
-        
-        while (pos < decompressedContent.size()) {
-            // Find next null byte (end of current entry)
-            size_t nextNull = decompressedContent.find('\0', pos);
-            if (nextNull == std::string::npos) break;
-            
-            // Extract the entry (mode + name)
-            std::string entry = decompressedContent.substr(pos, nextNull - pos);
-            
-            // Find the last space (separates mode from name)
-            size_t lastSpace = entry.find_last_of(' ');
-            if (lastSpace != std::string::npos) {
-                std::string mode = entry.substr(0, lastSpace);
-                std::string filename = entry.substr(lastSpace + 1);
-                
-                if (nameOnly) {
-                    std::cout << filename << '\n';
-                } else {
-                    // Extract hash (20 bytes after null)
-                    std::string binaryHash = decompressedContent.substr(nextNull + 1, 20);
-                    std::string hashHex = binaryToHexString(binaryHash);
-                    
-                    std::string type = (mode.substr(0, 3) == "400") ? "tree" : "blob";
-                    
-                    std::cout << mode << " " << type << " " << hashHex << "\t" << filename << '\n';
-                }
-            }
-            
-            // Skip the hash (20 bytes) and move to next entry
-            pos = nextNull + 1 + 20;
-        }
+        success = handleLsTree(argc, argv);
     } else if (command == "write-tree") {
-        std::string hashString = writeTree("."); // helper function may have to be called recursively
-        if (hashString.empty()) {
-            std::cerr << "Failed to write tree\n";
-            return EXIT_FAILURE;
-        }
-        std::cout << hashString << '\n';
+        success = handleWriteTree();
     } else if (command == "commit-tree") {
-        if (argc < 7) {
-            std::cerr << "Usage: commit-tree <tree_sha> -p <commit_sha> -m <message>\n";
-            return EXIT_FAILURE;
-        }
-
-        std::string treeHash = argv[2];
-        std::string parentHash = argv[4];  // -p flag
-        std::string message = argv[6];     // -m flag
-        
-        std::string author = "Vincent Schacknies";
-        std::string email = "vincent.schacknies@icloud.com";
-
-        std::string commitHash = writeCommit(treeHash, parentHash, message, author, email);
-        if (commitHash.empty()) {
-            std::cerr << "Failed to create commit\n";
-            return EXIT_FAILURE;
-        }
-        
-        std::cout << commitHash << '\n';
-    }
-    else {
+        success = handleCommitTree(argc, argv);
+    } else if (command == "commit") {
+        success = handleCommit(argc, argv);
+    } else if (command == "show-head") {
+        success = handleShowHead();
+    } else if (command == "log") {
+        success = handleLog();
+    } else {
         std::cerr << "Unknown command " << command << '\n';
         return EXIT_FAILURE;
     }
     
-    return EXIT_SUCCESS;
+    return success ? EXIT_SUCCESS : EXIT_FAILURE;
 }
