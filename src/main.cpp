@@ -47,17 +47,14 @@ std::string binaryToHexString(const std::string& binary) {
     return hexString;
 }
 
-// Helper function to get object file path
 std::string getObjectPath(const std::string& hash) {
     return ".git/objects/" + hash.substr(0, 2) + "/" + hash.substr(2);
 }
 
-// Common object writing function
 std::string writeObject(const std::string& type, const std::string& content) {
     // Format: <type> <size>\0<content>
     std::string formattedContent = type + " " + std::to_string(content.size()) + '\0' + content;
 
-    // Calculate SHA-1 hash
     unsigned char hash[SHA_DIGEST_LENGTH];
     SHA1(reinterpret_cast<const unsigned char*>(formattedContent.data()), 
          formattedContent.size(), 
@@ -176,7 +173,6 @@ std::string decompressObject(const std::string& compressedContent) {
     return decompressedContent;
 }
 
-// Read and decompress an object by hash
 std::string readObject(const std::string& hash) {
     std::string objectPath = getObjectPath(hash);
     
@@ -193,14 +189,13 @@ std::string readObject(const std::string& hash) {
     return decompressObject(compressedContent);
 }
 
-// Read object content (without header)
+// without header
 std::string readObjectContent(const std::string& hash) {
     std::string decompressedContent = readObject(hash);
     if (decompressedContent.empty()) {
         return "";
     }
     
-    // Extract content after the null byte
     size_t nullPos = decompressedContent.find('\0');
     if (nullPos != std::string::npos) {
         return decompressedContent.substr(nullPos + 1);
@@ -297,7 +292,6 @@ bool writeHeadAsBranch(const std::string& commitHash, const std::string& branchN
     return true;
 }
 
-// Parse a commit object and extract its components
 struct CommitInfo {
     std::string hash;
     std::string treeHash;
@@ -496,7 +490,6 @@ std::vector<FileInfo> parseTree(const std::string& treeHash) {
     return files;
 }
 
-// Recursively restore a tree to the working directory
 bool restoreTree(const std::string& treeHash, const std::string& basePath = "") {
     std::vector<FileInfo> files = parseTree(treeHash);
     
@@ -580,89 +573,108 @@ std::set<std::string> getTargetFiles(const std::string& treeHash, const std::str
     return targetFiles;
 }
 
-// restore first, then clean
+// needed for removing files not in the commit
+void collectTreeFiles(const std::string& treeHash, const std::string& basePath, std::set<std::string>& fileSet) {
+    std::vector<FileInfo> files = parseTree(treeHash);
+    for (const auto& file : files) {
+        std::string fullPath = basePath.empty() ? file.name : basePath + "/" + file.name;
+        if (file.isDirectory) {
+            collectTreeFiles(file.hash, fullPath, fileSet);
+        } else {
+            fileSet.insert(fullPath);
+        }
+    }
+}
+
+// creates or overwrites files
+bool restoreTreeOverwrite(const std::string& treeHash, const std::string& basePath = "") {
+    std::vector<FileInfo> files = parseTree(treeHash);
+    for (const auto& file : files) {
+        std::string fullPath = basePath.empty() ? file.name : basePath + "/" + file.name;
+        if (file.isDirectory) {
+            std::filesystem::create_directories(fullPath);
+            if (!restoreTreeOverwrite(file.hash, fullPath)) {
+                return false;
+            }
+        } else {
+            std::string content = readObjectContent(file.hash);
+            if (content.empty()) {
+                std::cerr << "Failed to read blob: " << file.hash << '\n';
+                return false;
+            }
+            std::filesystem::path filePath(fullPath);
+            if (filePath.has_parent_path()) {
+                std::filesystem::create_directories(filePath.parent_path());
+            }
+            std::ofstream outFile(fullPath);
+            if (!outFile.is_open()) {
+                std::cerr << "Failed to create file: " << fullPath << '\n';
+                return false;
+            }
+            outFile << content;
+            outFile.close();
+        }
+    }
+    return true;
+}
+
+std::set<std::string> getWorkingDirectoryFiles(const std::string& path = ".") {
+    std::set<std::string> files;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(path)) {
+        std::string entryPath = entry.path().string();
+        if (entryPath.find("/.git") != std::string::npos || entryPath.find("\\.git") != std::string::npos) {
+            continue;
+        }
+        if (entry.is_regular_file()) {
+            // Remove leading "./" if present
+            if (entryPath.substr(0, 2) == "./") {
+                entryPath = entryPath.substr(2);
+            }
+            files.insert(entryPath);
+        }
+    }
+    return files;
+}
+
 bool safeCheckout(const std::string& commitHash) {
     CommitInfo commit = parseCommit(commitHash);
     if (commit.hash.empty()) {
         std::cerr << "Invalid commit hash: " << commitHash << '\n';
         return false;
     }
-    
     std::cout << "Checking out commit " << commitHash << '\n';
     std::cout << "Message: " << commit.message << '\n';
-    
-    // 2. Get list of files that should exist in target commit
-    std::cout << "Analyzing target commit...\n";
-    std::set<std::string> targetFiles = getTargetFiles(commit.treeHash);
-    
-    // 3. Restore files from the target commit (SAFE: don't delete anything yet)
-    std::cout << "Restoring files...\n";
-    if (!restoreTree(commit.treeHash)) {
+
+    // collect all files that should exist after checkout
+    std::set<std::string> targetFiles;
+    collectTreeFiles(commit.treeHash, "", targetFiles);
+
+
+    if (!restoreTreeOverwrite(commit.treeHash)) {
         std::cerr << "Failed to restore files - checkout aborted\n";
         return false;
     }
-    
-    // 4. Now that files are safely restored, clean up old files
-    // std::cout << "Cleaning up old files...\n";
-    // std::vector<std::string> currentFiles = getAllFiles();
-    
-    // for (const auto& file : currentFiles) {
-    //     if (targetFiles.find(file) == targetFiles.end()) {
-    //         try {
-    //             std::filesystem::remove(file);
-    //             std::cout << "Removed: " << file << '\n';
-    //         } catch (const std::filesystem::filesystem_error& e) {
-    //             std::cerr << "Warning: Failed to remove file " << file << ": " << e.what() << '\n';
-    //             // Don't fail the checkout for cleanup errors
-    //         }
-    //     }
-    // }
-    
-    // 5. Update HEAD
+
+    // delete files not in the commit
+    std::cout << "Cleaning up files not in commit...\n";
+    std::set<std::string> currentFiles = getWorkingDirectoryFiles();
+    for (const auto& file : currentFiles) {
+        if (targetFiles.find(file) == targetFiles.end()) {
+            try {
+                std::filesystem::remove(file);
+                std::cout << "Removed: " << file << '\n';
+            } catch (const std::filesystem::filesystem_error& e) {
+                std::cerr << "Warning: Failed to remove file " << file << ": " << e.what() << '\n';
+            }
+        }
+    }
+
+
     if (!writeHead(commitHash)) {
         std::cerr << "Failed to update HEAD\n";
         return false;
     }
-    
     std::cout << "Checkout complete!\n";
-    return true;
-}
-
-// Clean working directory (remove files not in target commit)
-bool cleanWorkingDirectory(const std::string& targetTreeHash) {
-    // Get all current files
-    std::vector<std::string> currentFiles = getAllFiles();
-    
-    // Get all files in target commit
-    std::vector<FileInfo> targetFiles = parseTree(targetTreeHash);
-    std::set<std::string> targetFileSet;
-    
-    // Build set of target files (recursive)
-    std::function<void(const std::string&, const std::string&)> collectFiles;
-    collectFiles = [&](const std::string& treeHash, const std::string& basePath) {
-        std::vector<FileInfo> files = parseTree(treeHash);
-        for (const auto& file : files) {
-            std::string fullPath = basePath.empty() ? file.name : basePath + "/" + file.name;
-            if (file.isDirectory) {
-                collectFiles(file.hash, fullPath);
-            } else {
-                targetFileSet.insert(fullPath);
-            }
-        }
-    };
-    collectFiles(targetTreeHash, "");
-    
-    // Remove files that exist now but not in target
-    for (const auto& file : currentFiles) {
-        if (targetFileSet.find(file) == targetFileSet.end()) {
-            try {
-                std::filesystem::remove(file);
-            } catch (const std::filesystem::filesystem_error& e) {
-                std::cerr << "Failed to remove file " << file << ": " << e.what() << '\n';
-            }
-        }
-    }
-    
     return true;
 }
 
