@@ -11,6 +11,8 @@
 #include <ctime>
 #include <set>
 #include <functional>
+#include <unordered_set>
+#include <queue>
 
 struct TreeEntry {
     std::string mode;
@@ -303,12 +305,12 @@ struct CommitInfo {
 
 CommitInfo parseCommit(const std::string& commitHash) {
     CommitInfo info;
-    info.hash = commitHash;
-    
+    info.hash = "";
     std::string content = readObjectContent(commitHash);
-    if (content.empty()) {
-        return info;
-    }
+    if (content.empty() || content.substr(0,5) != "tree ")
+        return info;               // early-return invalid commit
+
+    info.hash = commitHash;
     
     std::istringstream stream(content);
     std::string line;
@@ -791,33 +793,101 @@ bool handleShowHead() {
     return true;
 }
 
-bool handleLog() {
-    std::string currentHash = readHead();
-    if (currentHash.empty()) {
-        std::cout << "No commits yet\n";
+std::vector<std::string> findAllCommitHashes() {
+    std::vector<std::string> commitHashes;
+    std::unordered_set<std::string> seen; // Avoid duplicates
+
+    std::string objectsDir = ".git/objects";
+    for (const auto& dirEntry : std::filesystem::directory_iterator(objectsDir)) {
+        if (!dirEntry.is_directory()) continue;
+        std::string dirName = dirEntry.path().filename().string();
+        if (dirName.size() != 2) continue; // Only object directories
+
+        for (const auto& fileEntry : std::filesystem::directory_iterator(dirEntry.path())) {
+            std::string fileName = fileEntry.path().filename().string();
+            if (fileName.size() != 38) continue; // Only object files
+
+            std::string hash = dirName + fileName;
+            std::string content = readObject(hash);
+            if (!content.empty() && content.substr(0, 6) == "commit") {
+                if (seen.find(hash) == seen.end()) {
+                    commitHashes.push_back(hash);
+                    seen.insert(hash);
+                }
+            }
+        }
+    }
+    return commitHashes;
+}
+
+// returns in reverse-chronological order
+std::vector<std::string> getReachableCommits(const std::vector<std::string>& startHashes) {
+    std::vector<std::string> orderedCommits;
+    std::unordered_set<std::string> visited;
+    std::queue<std::string> toVisit;
+
+    for (const auto& hash : startHashes) {
+        if (!hash.empty() && visited.count(hash) == 0) {
+            toVisit.push(hash);
+            visited.insert(hash);
+        }
+    }
+
+    int maxIterations = 1000;
+    int iterations = 0;
+    while (!toVisit.empty() && iterations++ < maxIterations) {
+        std::string current = toVisit.front();
+        toVisit.pop();
+        if (current.empty()) continue;
+
+        CommitInfo commit = parseCommit(current);
+        if (commit.hash.empty()) continue;
+
+        orderedCommits.push_back(current);
+
+        if (!commit.parentHash.empty() && visited.count(commit.parentHash) == 0) {
+            toVisit.push(commit.parentHash);
+            visited.insert(commit.parentHash);
+        }
+    }
+    if (iterations >= maxIterations) {
+        std::cerr << "Aborted: possible infinite loop in commit graph traversal.\n";
+    }
+    return orderedCommits;
+}
+
+bool handleLog(int argc, char *argv[]) {
+    bool showAll = (argc >= 3 && std::string(argv[2]) == "--all");
+    std::string currentHead = readHead();
+
+    std::vector<std::string> hashesToShow;
+
+    if (showAll) {
+        hashesToShow = findAllCommitHashes();
+    } else {
+        std::vector<std::string> refs = {currentHead};
+        hashesToShow = getReachableCommits(refs);
+    }
+
+    if (hashesToShow.empty()) {
+        std::cout << "No commits found\n";
         return true;
     }
-    
-    // Walk through commit history
-    while (!currentHash.empty()) {
-        CommitInfo commit = parseCommit(currentHash);
-        if (commit.hash.empty()) {
-            std::cerr << "Failed to parse commit: " << currentHash << '\n';
-            break;
-        }
-        
-        // Print commit information
-        std::cout << "commit " << commit.hash << '\n';
+
+    for (const auto& hash : hashesToShow) {
+        CommitInfo commit = parseCommit(hash);
+        if (commit.hash.empty()) continue;
+
+        std::string headMark = (hash == currentHead) ? "   <-- HEAD" : "";
+
+        std::cout << "commit " << commit.hash << headMark << '\n';
         std::cout << "Author: " << commit.author << '\n';
         std::cout << "Date:   " << formatTimestamp(commit.timestamp) << '\n';
         std::cout << '\n';
         std::cout << "    " << commit.message << '\n';
         std::cout << '\n';
-        
-        // Move to parent commit
-        currentHash = commit.parentHash;
     }
-    
+
     return true;
 }
 
@@ -829,6 +899,55 @@ bool handleCheckout(int argc, char *argv[]) {
     
     std::string commitHash = argv[2];
     return safeCheckout(commitHash);
+}
+
+
+std::vector<std::string> collectReferenceCommits() {
+    std::vector<std::string> refs;
+    std::string headHash = readHead();
+    if (!headHash.empty()) refs.push_back(headHash);
+
+    std::string refsDir = ".git/refs/heads";
+    if (std::filesystem::exists(refsDir)) {
+        for (const auto& entry : std::filesystem::directory_iterator(refsDir)) {
+            std::ifstream refFile(entry.path());
+            std::string hash;
+            std::getline(refFile, hash);
+            if (!hash.empty()) refs.push_back(hash);
+        }
+    }
+    return refs;
+}
+
+
+bool handleGC() {
+    std::cout << "Running garbage collection...\n";
+    
+    std::vector<std::string> allCommits = findAllCommitHashes();
+    std::vector<std::string> refs = collectReferenceCommits();
+    auto reachableVec = getReachableCommits(refs);
+    std::unordered_set<std::string> reachable(reachableVec.begin(),
+                                          reachableVec.end());
+
+    // delete unreachable commits
+    int deleted = 0;
+    for (const auto& hash : allCommits) {
+        std::string path = getObjectPath(hash);
+        if (reachable.count(hash) == 0) {
+            if (!std::filesystem::exists(path)) {
+                continue;
+            }
+            try {
+                std::filesystem::remove(path);
+                std::cout << "[GC] Deleted: " << hash << '\n';
+                ++deleted;
+            } catch (const std::filesystem::filesystem_error& e) {
+                std::cerr << "[GC] Failed to delete " << hash << ": " << e.what() << '\n';
+            }
+        }
+    }
+    std::cout << "Garbage collection complete. " << deleted << " commits deleted.\n";
+    return true;
 }
 
 int main(int argc, char *argv[]) {
@@ -860,9 +979,11 @@ int main(int argc, char *argv[]) {
     } else if (command == "show-head") {
         success = handleShowHead();
     } else if (command == "log") {
-        success = handleLog();
+        success = handleLog(argc, argv);
     } else if (command == "checkout") {
         success = handleCheckout(argc, argv);
+    } else if (command == "gc") {
+        success = handleGC();
     } else {
         std::cerr << "Unknown command " << command << '\n';
         return EXIT_FAILURE;
