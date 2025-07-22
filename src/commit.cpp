@@ -285,12 +285,12 @@ std::string readHead()
     if (!in) return {};
     std::string line; std::getline(in, line);
 
-    if (line.rfind("ref: ", 0) == 0) {          // symbolic ref
+    if (line.rfind("ref: ", 0) == 0) {
         std::ifstream ref(".git/" + line.substr(5));
         std::string   hash; std::getline(ref, hash);
         return hash;
     }
-    return line;                                // detached
+    return line; // detached
 }
 
 bool writeHead(const std::string& hash)
@@ -320,7 +320,7 @@ CommitInfo parseCommit(const std::string& commitHash)
                 info.author = line.substr(7, lt - 8);
             if (gt + 2 < line.size()) info.timestamp = line.substr(gt + 2);
         }
-        else if (line.empty()) {                 // message starts
+        else if (line.empty()) {// message starts
             std::ostringstream msg;
             while (std::getline(in, line)) { msg << line << '\n'; }
             info.message = msg.str();

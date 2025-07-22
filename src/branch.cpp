@@ -5,7 +5,7 @@
 #include <iostream>
 
 
-// Get the current branch name (returns empty if detached HEAD)
+// returns empty if detached HEAD
 std::string getCurrentBranch() {
     std::ifstream headFile(".git/HEAD");
     if (!headFile.is_open()) {
@@ -16,19 +16,17 @@ std::string getCurrentBranch() {
     std::getline(headFile, headContent);
     headFile.close();
     
-    // Check if HEAD points to a branch reference
     if (headContent.substr(0, 5) == "ref: ") {
-        std::string refPath = headContent.substr(5); // Remove "ref: "
-        // Extract branch name from "refs/heads/main" -> "main"
+        std::string refPath = headContent.substr(5); // remove "ref: "
+        // removes "refs/heads/main" -> "main"
         if (refPath.substr(0, 11) == "refs/heads/") {
-            return refPath.substr(11); // Remove "refs/heads/"
+            return refPath.substr(11);
         }
     }
     
-    return ""; // Detached HEAD
+    return "";
 }
 
-// Update a branch to point to a specific commit
 bool updateBranch(const std::string& branchName, const std::string& commitHash) {
     std::string branchPath = ".git/refs/heads/" + branchName;
     std::filesystem::create_directories(".git/refs/heads");
@@ -44,7 +42,6 @@ bool updateBranch(const std::string& branchName, const std::string& commitHash) 
     return true;
 }
 
-// Switch HEAD to point to a branch
 bool switchToBranch(const std::string& branchName) {
     std::ofstream headFile(".git/HEAD");
     if (!headFile.is_open()) {
