@@ -746,8 +746,62 @@ bool handleCommitTree(int argc, char *argv[]) {
     return true;
 }
 
+// Add these helper functions after your existing utility functions and before the command handlers
+
+// Get the current branch name (returns empty if detached HEAD)
+std::string getCurrentBranch() {
+    std::ifstream headFile(".git/HEAD");
+    if (!headFile.is_open()) {
+        return "";
+    }
+    
+    std::string headContent;
+    std::getline(headFile, headContent);
+    headFile.close();
+    
+    // Check if HEAD points to a branch reference
+    if (headContent.substr(0, 5) == "ref: ") {
+        std::string refPath = headContent.substr(5); // Remove "ref: "
+        // Extract branch name from "refs/heads/main" -> "main"
+        if (refPath.substr(0, 11) == "refs/heads/") {
+            return refPath.substr(11); // Remove "refs/heads/"
+        }
+    }
+    
+    return ""; // Detached HEAD
+}
+
+// Update a branch to point to a specific commit
+bool updateBranch(const std::string& branchName, const std::string& commitHash) {
+    std::string branchPath = ".git/refs/heads/" + branchName;
+    std::filesystem::create_directories(".git/refs/heads");
+    
+    std::ofstream branchFile(branchPath);
+    if (!branchFile.is_open()) {
+        std::cerr << "Failed to update branch: " << branchName << '\n';
+        return false;
+    }
+    
+    branchFile << commitHash << '\n';
+    branchFile.close();
+    return true;
+}
+
+// Switch HEAD to point to a branch
+bool switchToBranch(const std::string& branchName) {
+    std::ofstream headFile(".git/HEAD");
+    if (!headFile.is_open()) {
+        std::cerr << "Failed to update HEAD\n";
+        return false;
+    }
+    
+    headFile << "ref: refs/heads/" << branchName << '\n';
+    headFile.close();
+    return true;
+}
+
 bool handleCommit(int argc, char *argv[]) {
-    if (argc < 3) {
+    if (argc < 4) {  // Changed from 3 to 4 to require message
         std::cerr << "Usage: commit -m <message>\n";
         return false;
     }
@@ -777,9 +831,20 @@ bool handleCommit(int argc, char *argv[]) {
         return false;
     }
     
-    writeHead(commitHash);
+    // ENHANCED: Update current branch instead of just HEAD
+    std::string currentBranch = getCurrentBranch();
+    if (!currentBranch.empty()) {
+        // We're on a branch - update the branch
+        if (!updateBranch(currentBranch, commitHash)) {
+            return false;
+        }
+        std::cout << "Created commit " << commitHash << " on branch '" << currentBranch << "'\n";
+    } else {
+        // Detached HEAD - just update HEAD directly (existing behavior)
+        writeHead(commitHash);
+        std::cout << "Created commit " << commitHash << " (detached HEAD)\n";
+    }
     
-    std::cout << "Created commit " << commitHash << '\n';
     return true;
 }
 
@@ -893,12 +958,49 @@ bool handleLog(int argc, char *argv[]) {
 
 bool handleCheckout(int argc, char *argv[]) {
     if (argc < 3) {
-        std::cerr << "Usage: checkout <commit-hash>\n";
+        std::cerr << "Usage: checkout <commit-hash-or-branch-name>\n";
         return false;
     }
     
-    std::string commitHash = argv[2];
-    return safeCheckout(commitHash);
+    std::string target = argv[2];
+    std::string commitHash;
+    
+    // Check if target is a branch name
+    std::string branchPath = ".git/refs/heads/" + target;
+    if (std::filesystem::exists(branchPath)) {
+        // It's a branch name
+        std::ifstream branchFile(branchPath);
+        std::getline(branchFile, commitHash);
+        branchFile.close();
+        
+        if (commitHash.empty()) {
+            std::cerr << "Branch '" << target << "' has no commits\n";
+            return false;
+        }
+        
+        // Checkout the commit and switch to the branch
+        if (!safeCheckout(commitHash)) {
+            return false;
+        }
+        
+        // Update HEAD to point to the branch
+        if (!switchToBranch(target)) {
+            return false;
+        }
+        
+        std::cout << "Switched to branch '" << target << "'\n";
+    } else {
+        // Assume it's a commit hash
+        commitHash = target;
+        
+        if (!safeCheckout(commitHash)) {
+            return false;
+        }
+        
+        std::cout << "HEAD is now at " << commitHash << " (detached HEAD)\n";
+    }
+    
+    return true;
 }
 
 
@@ -950,6 +1052,48 @@ bool handleGC() {
     return true;
 }
 
+
+bool handleBranch(int argc, char *argv[]) {
+    if (argc == 2) {
+        // List all branches
+        std::string currentBranch = getCurrentBranch();
+        
+        if (!std::filesystem::exists(".git/refs/heads")) {
+            std::cout << "No branches yet\n";
+            return true;
+        }
+        
+        for (const auto& entry : std::filesystem::directory_iterator(".git/refs/heads")) {
+            std::string branchName = entry.path().filename().string();
+            if (branchName == currentBranch) {
+                std::cout << "* " << branchName << '\n';  // Mark current branch
+            } else {
+                std::cout << "  " << branchName << '\n';
+            }
+        }
+        return true;
+    } else if (argc == 3) {
+        // Create new branch
+        std::string newBranchName = argv[2];
+        std::string currentCommit = readHead();
+        
+        if (currentCommit.empty()) {
+            std::cerr << "No commits yet - cannot create branch\n";
+            return false;
+        }
+        
+        if (!updateBranch(newBranchName, currentCommit)) {
+            return false;
+        }
+        
+        std::cout << "Created branch '" << newBranchName << "'\n";
+        return true;
+    } else {
+        std::cerr << "Usage: branch [branch-name]\n";
+        return false;
+    }
+}
+
 int main(int argc, char *argv[]) {
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
@@ -984,6 +1128,8 @@ int main(int argc, char *argv[]) {
         success = handleCheckout(argc, argv);
     } else if (command == "gc") {
         success = handleGC();
+    } else if (command == "branch") {
+        success = handleBranch(argc, argv);
     } else {
         std::cerr << "Unknown command " << command << '\n';
         return EXIT_FAILURE;
