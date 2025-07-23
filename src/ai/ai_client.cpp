@@ -5,16 +5,14 @@
 
 namespace vit::ai {
 
-std::unique_ptr<AIClient> AI::createOpenAI(const std::string& apiKey, const std::string& model) {
+std::unique_ptr<AIClient> AI::createOpenAI(const std::string& apiKey) {
     if (apiKey.empty()) {
         return nullptr;
     }
     
     try {
-        OpenAIClient::Config config;
-        config.apiKey = apiKey;
-        config.model = model;
-        return std::make_unique<OpenAIClient>(config);
+        OpenAIClient::Config config{apiKey};
+        return std::make_unique<OpenAIClient>(config.apiKey);
     } catch (const std::exception&) {
         return nullptr;
     }

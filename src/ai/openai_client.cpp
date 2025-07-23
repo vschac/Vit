@@ -29,17 +29,13 @@ static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::stri
     return totalSize;
 }
 
-OpenAIClient::OpenAIClient(const Config& config) : pImpl_(std::make_unique<Impl>(config)) {
-    if (!validateConfig()) {
-        throw std::invalid_argument("Invalid OpenAI configuration");
-    }
-}
-
-OpenAIClient::OpenAIClient(const std::string& apiKey) : OpenAIClient(Config{apiKey}) {}
+OpenAIClient::OpenAIClient(const std::string& apiKey) : pImpl_(std::make_unique<Impl>(Config{apiKey})) {}
 
 OpenAIClient::~OpenAIClient() = default;
 
-std::future<GenerationResult> OpenAIClient::generateResponse(const std::vector<Message>& messages) {
+// future enables async generation
+std::future<AIClient::GenerationResult> OpenAIClient::generateResponse(const std::vector<Message>& messages) {
+    // async enables it to run in a separate thread, 
     return std::async(std::launch::async, [this, messages]() {
         return makeRequest(messages);
     });
@@ -57,27 +53,7 @@ std::string OpenAIClient::getModelName() const {
     return pImpl_->config.model;
 }
 
-bool OpenAIClient::setModel(const std::string& modelName) {
-    if (modelName.empty()) {
-        return false;
-    }
-    pImpl_->config.model = modelName;
-    return true;
-}
-
-void OpenAIClient::setMaxTokens(int maxTokens) {
-    if (maxTokens > 0) {
-        pImpl_->config.maxTokens = maxTokens;
-    }
-}
-
-void OpenAIClient::setTemperature(double temperature) {
-    if (temperature >= 0.0 && temperature <= 2.0) {
-        pImpl_->config.temperature = temperature;
-    }
-}
-
-GenerationResult OpenAIClient::makeRequest(const std::vector<Message>& messages) {
+AIClient::GenerationResult OpenAIClient::makeRequest(const std::vector<Message>& messages) {
     CURL* curl = curl_easy_init();
     if (!curl) {
         return GenerationResult::Error("Failed to initialize CURL");
@@ -87,16 +63,15 @@ GenerationResult OpenAIClient::makeRequest(const std::vector<Message>& messages)
     CURLcode res;
 
     try {
-        // Prepare JSON payload
         std::string jsonPayload = createJsonPayload(messages);
         
-        // Prepare headers
+        // headers
         struct curl_slist* headers = nullptr;
         std::string authHeader = "Authorization: Bearer " + pImpl_->config.apiKey;
         headers = curl_slist_append(headers, "Content-Type: application/json");
         headers = curl_slist_append(headers, authHeader.c_str());
 
-        // Configure CURL
+        // CURL options
         std::string url = pImpl_->config.baseUrl + "/chat/completions";
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonPayload.c_str());
@@ -106,14 +81,11 @@ GenerationResult OpenAIClient::makeRequest(const std::vector<Message>& messages)
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, pImpl_->config.timeoutSeconds);
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
-        // Perform the request
         res = curl_easy_perform(curl);
 
-        // Check HTTP status code
         long httpCode = 0;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
-        // Cleanup
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
 
@@ -152,11 +124,10 @@ std::string OpenAIClient::createJsonPayload(const std::vector<Message>& messages
     return payload.dump();
 }
 
-GenerationResult OpenAIClient::parseResponse(const std::string& jsonResponse) {
+AIClient::GenerationResult OpenAIClient::parseResponse(const std::string& jsonResponse) {
     try {
         json parsed = json::parse(jsonResponse);
         
-        // Check for API errors
         if (parsed.contains("error")) {
             std::string errorMsg = "OpenAI API error";
             if (parsed["error"].contains("message")) {
@@ -189,4 +160,4 @@ bool OpenAIClient::validateConfig() const {
            pImpl_->config.temperature <= 2.0;
 }
 
-} // namespace vit::ai
+}

@@ -9,6 +9,10 @@
 
 #include "commit.hpp"
 #include "branch.hpp"
+#include "features/comment_generator.hpp"
+#include "ai/ai_client.hpp"
+#include "utils/file_utils.hpp"
+#include "features/interactive_review.hpp"
 
 
 bool handleInit() {
@@ -157,8 +161,8 @@ bool handleCommitTree(int argc, char *argv[]) {
 }
 
 bool handleCommit(int argc, char *argv[]) {
-    if (argc < 4) {  // Changed from 3 to 4 to require message
-        std::cerr << "Usage: commit -m <message>\n";
+    if (argc < 4) {
+        std::cerr << "Usage: commit -m <message>\nOptional flags: --add-comments <file1> <file2> ...";
         return false;
     }
     
@@ -169,6 +173,57 @@ bool handleCommit(int argc, char *argv[]) {
     }
     
     std::string message = argv[3];
+
+    if (argc > 4) {
+        std::string flag = argv[4];
+        if (flag == "--add-comments") {
+            std::unique_ptr<vit::ai::AIClient> client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
+            if (!client) {
+                std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
+                return false;
+            }
+            
+            vit::features::CommentGenerator commentGenerator(std::move(client));
+
+            std::vector<std::string> files;
+            if (argc > 5) {
+                std::stringstream target_files = std::stringstream(argv[5]);
+                std::string file;
+                while (std::getline(target_files, file, ' ')) {
+                    files.push_back(file);
+                }
+            } else {
+                files = vit::utils::FileUtils::getFilesInDirectory(".");
+            }
+            
+            auto results = commentGenerator.generateCommentsForFiles(files);
+            
+            // Interactive review step
+            vit::features::InteractiveReview review;
+            auto reviewResult = review.reviewComments(results);
+            
+            if (!reviewResult.shouldProceed) {
+                std::cout << "Commit cancelled by user.\n";
+                return false;
+            }
+            
+            // Apply only accepted comments
+            for (const auto& acceptedResult : reviewResult.accepted) {
+                std::cout << "Attempting to write to: '" << acceptedResult.fileName << "'" << std::endl;
+                bool writeSuccess = vit::utils::FileUtils::writeFile(acceptedResult.fileName, acceptedResult.modifiedContent);
+                if (writeSuccess) {
+                    std::cout << "✓ Applied comments to " << acceptedResult.fileName << std::endl;
+                } else {
+                    std::cout << "✗ Failed to write to " << acceptedResult.fileName << std::endl;
+                }
+            }
+            
+            if (!reviewResult.rejected.empty()) {
+                std::cout << "Skipped " << reviewResult.rejected.size() << " file(s).\n";
+            }
+        }
+    }
+
     
     std::string treeHash = writeTree(".");
     if (treeHash.empty()) {
@@ -187,7 +242,6 @@ bool handleCommit(int argc, char *argv[]) {
         return false;
     }
     
-    // ENHANCED: Update current branch instead of just HEAD
     std::string currentBranch = getCurrentBranch();
     if (!currentBranch.empty()) {
         // We're on a branch - update the branch
@@ -271,12 +325,10 @@ bool handleCheckout(int argc, char *argv[]) {
             return false;
         }
         
-        // Checkout the commit and switch to the branch
         if (!safeCheckout(commitHash)) {
             return false;
         }
         
-        // Update HEAD to point to the branch
         if (!switchToBranch(target)) {
             return false;
         }
@@ -328,7 +380,6 @@ bool handleGC() {
 
 bool handleBranch(int argc, char *argv[]) {
     if (argc == 2) {
-        // List all branches
         std::string currentBranch = getCurrentBranch();
         
         if (!std::filesystem::exists(".git/refs/heads")) {

@@ -219,7 +219,10 @@ bool restoreTree(const std::string& treeHash, const std::string& base)
             const std::string blob = readObjectContent(f.hash);
             if (blob.empty()) return false;
 
-            std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+            auto parentPath = std::filesystem::path(path).parent_path();
+            if (!parentPath.empty()) {
+                std::filesystem::create_directories(parentPath);
+            }
             std::ofstream out(path, std::ios::binary);
             if (!out) return false;
             out << blob;
@@ -252,7 +255,10 @@ bool restoreTreeOverwrite(const std::string& treeHash, const std::string& base)
             const std::string blob = readObjectContent(f.hash);
             if (blob.empty()) return false;
 
-            std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+            auto parentPath = std::filesystem::path(path).parent_path();
+            if (!parentPath.empty()) {
+                std::filesystem::create_directories(parentPath);
+            }
             std::ofstream out(path, std::ios::binary);
             if (!out) return false;
             out << blob;
