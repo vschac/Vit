@@ -13,6 +13,7 @@
 #include "ai/ai_client.hpp"
 #include "utils/file_utils.hpp"
 #include "features/interactive_review.hpp"
+#include "features/review_generator.hpp"
 
 
 bool handleInit() {
@@ -160,9 +161,36 @@ bool handleCommitTree(int argc, char *argv[]) {
     return true;
 }
 
+struct ParsedArgs {
+    bool generateReview = false;
+    bool addComments = false;
+    std::vector<std::string> targetFiles;
+};
+
+ParsedArgs parseCommitArguments(int argc, char *argv[], int startIndex) {
+    ParsedArgs args;
+    
+    for (int i = startIndex; i < argc; i++) {
+        std::string arg = argv[i];
+        
+        if (arg == "--review") {
+            args.generateReview = true;
+        } else if (arg == "--add-comments") {
+            args.addComments = true;
+        } else if (arg.substr(0, 2) != "--") {
+            // Not a flag, must be a file
+            args.targetFiles.push_back(arg);
+        } else {
+            std::cerr << "Warning: Unknown flag " << arg << std::endl;
+        }
+    }
+    
+    return args;
+}
+
 bool handleCommit(int argc, char *argv[]) {
     if (argc < 4) {
-        std::cerr << "Usage: commit -m <message>\nOptional flags: --add-comments <file1> <file2> ...";
+        std::cerr << "Usage: commit -m <message> [--add-comments] [--review] [file1 file2 ...]\n";
         return false;
     }
     
@@ -173,58 +201,90 @@ bool handleCommit(int argc, char *argv[]) {
     }
     
     std::string message = argv[3];
+    
+    ParsedArgs args = parseCommitArguments(argc, argv, 4); // Start parsing after message
 
-    if (argc > 4) {
-        std::string flag = argv[4];
-        if (flag == "--add-comments") {
-            std::unique_ptr<vit::ai::AIClient> client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
-            if (!client) {
-                std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
-                return false;
-            }
-            
-            vit::features::CommentGenerator commentGenerator(std::move(client));
+    // Create AI client if needed
+    std::unique_ptr<vit::ai::AIClient> client;
+    if (args.generateReview || args.addComments) {
+        client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
+        if (!client) {
+            std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
+            return false;
+        }
+    }
 
-            std::vector<std::string> files;
-            if (argc > 5) {
-                std::stringstream target_files = std::stringstream(argv[5]);
-                std::string file;
-                while (std::getline(target_files, file, ' ')) {
-                    files.push_back(file);
-                }
+    // Determine target files
+    std::vector<std::string> files;
+    if (!args.targetFiles.empty()) {
+        // Use explicitly specified files
+        files = args.targetFiles;
+        std::cout << "Processing " << files.size() << " specified file(s)\n";
+    } else if (args.generateReview || args.addComments) {
+        // Use all source files in directory if AI features are enabled
+        files = vit::utils::FileUtils::getSourceFilesInDirectory(".");
+        std::cout << "Processing " << files.size() << " source file(s) from directory\n";
+    }
+
+    // Handle --add-comments
+    if (args.addComments) {
+        std::cout << "Generating AI comments...\n";
+        
+        // Create separate client for comments (since we may need two AI calls)
+        auto commentClient = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
+        if (!commentClient) {
+            std::cerr << "Failed to create AI client for comments.\n";
+            return false;
+        }
+        
+        vit::features::CommentGenerator commentGenerator(std::move(commentClient));
+        auto results = commentGenerator.generateCommentsForFiles(files);
+        
+        // Interactive review step
+        vit::features::InteractiveReview review;
+        auto reviewResult = review.reviewComments(results);
+        
+        if (!reviewResult.shouldProceed) {
+            std::cout << "Commit cancelled by user.\n";
+            return false;
+        }
+        
+        // Apply only accepted comments
+        for (const auto& acceptedResult : reviewResult.accepted) {
+            bool writeSuccess = vit::utils::FileUtils::writeFile(acceptedResult.fileName, acceptedResult.modifiedContent);
+            if (writeSuccess) {
+                std::cout << "✓ Applied comments to " << acceptedResult.fileName << std::endl;
             } else {
-                files = vit::utils::FileUtils::getFilesInDirectory(".");
+                std::cout << "✗ Failed to write to " << acceptedResult.fileName << std::endl;
             }
-            
-            auto results = commentGenerator.generateCommentsForFiles(files);
-            
-            // Interactive review step
-            vit::features::InteractiveReview review;
-            auto reviewResult = review.reviewComments(results);
-            
-            if (!reviewResult.shouldProceed) {
-                std::cout << "Commit cancelled by user.\n";
-                return false;
-            }
-            
-            // Apply only accepted comments
-            for (const auto& acceptedResult : reviewResult.accepted) {
-                std::cout << "Attempting to write to: '" << acceptedResult.fileName << "'" << std::endl;
-                bool writeSuccess = vit::utils::FileUtils::writeFile(acceptedResult.fileName, acceptedResult.modifiedContent);
-                if (writeSuccess) {
-                    std::cout << "✓ Applied comments to " << acceptedResult.fileName << std::endl;
-                } else {
-                    std::cout << "✗ Failed to write to " << acceptedResult.fileName << std::endl;
-                }
-            }
-            
-            if (!reviewResult.rejected.empty()) {
-                std::cout << "Skipped " << reviewResult.rejected.size() << " file(s).\n";
+        }
+        
+        if (!reviewResult.rejected.empty()) {
+            std::cout << "Skipped " << reviewResult.rejected.size() << " file(s).\n";
+        }
+    }
+
+    // Handle --review (BEFORE commit)
+    if (args.generateReview) {
+        std::cout << "Generating AI review before commit...\n";
+        
+        vit::features::ReviewGenerator reviewGenerator(std::move(client));
+        auto reviewResult = reviewGenerator.generateReviewForFiles(files);
+        
+        if (!reviewResult.success) {
+            std::cerr << "Warning: Failed to generate AI review: " << reviewResult.error << "\n";
+            std::cout << "Proceeding with commit without review...\n";
+        } else {
+            // Write review to file
+            if (!vit::utils::FileUtils::writeFile("review.md", reviewResult.reviewContent)) {
+                std::cerr << "Warning: Failed to write review.md file\n";
+            } else {
+                std::cout << "✓ AI review generated as review.md\n";
             }
         }
     }
 
-    
+    // Commit everything (including review.md if generated)
     std::string treeHash = writeTree(".");
     if (treeHash.empty()) {
         std::cerr << "Failed to create tree\n";
@@ -232,7 +292,6 @@ bool handleCommit(int argc, char *argv[]) {
     }
     
     std::string parentHash = readHead();
-    
     std::string author = "Vincent Schacknies";
     std::string email = "vincent.schacknies@icloud.com";
     
@@ -244,16 +303,19 @@ bool handleCommit(int argc, char *argv[]) {
     
     std::string currentBranch = getCurrentBranch();
     if (!currentBranch.empty()) {
-        // We're on a branch - update the branch
         if (!updateBranch(currentBranch, commitHash)) {
             return false;
         }
-        std::cout << "Created commit " << commitHash << " on branch '" << currentBranch << "'\n";
+        std::cout << "Created commit " << commitHash << " on branch '" << currentBranch << "'";
     } else {
-        // Detached HEAD - just update HEAD directly (existing behavior)
         writeHead(commitHash);
-        std::cout << "Created commit " << commitHash << " (detached HEAD)\n";
+        std::cout << "Created commit " << commitHash << " (detached HEAD)";
     }
+    
+    if (args.generateReview) {
+        std::cout << " with AI review";
+    }
+    std::cout << "\n";
     
     return true;
 }

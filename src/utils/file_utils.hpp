@@ -17,6 +17,11 @@ public:
     static std::string createBackup(const std::string& filePath);
 
     static std::vector<std::string> getFilesInDirectory(const std::string& directory = ".");
+
+    static std::vector<std::string> getSourceFilesInDirectory(const std::string& directory = ".");
+
+    static bool isSourceFile(const std::string& filePath);
+
 };
 
 }

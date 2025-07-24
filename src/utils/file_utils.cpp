@@ -79,4 +79,65 @@ std::vector<std::string> FileUtils::getFilesInDirectory(const std::string& direc
     return files;
 }
 
+
+
+std::vector<std::string> FileUtils::getSourceFilesInDirectory(const std::string& directory) {
+    auto allFiles = vit::utils::FileUtils::getFilesInDirectory(directory);
+    std::vector<std::string> sourceFiles;
+    
+    // Filter to only source files (reuse logic from comment generator)
+    for (const auto& file : allFiles) {
+        if (FileUtils::isSourceFile(file)) {
+            sourceFiles.push_back(file);
+        }
+    }
+    
+    return sourceFiles;
+}
+
+bool FileUtils::isSourceFile(const std::string& filePath) {
+    if (!vit::utils::FileUtils::fileExists(filePath)) {
+        return false;
+    }
+    
+    std::string ext = vit::utils::FileUtils::getFileExtension(filePath);
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    
+    // Same source extensions as comment generator
+    static const std::set<std::string> sourceExtensions = {
+        ".cpp", ".cxx", ".cc", ".c",           // C/C++
+        ".hpp", ".hxx", ".h", ".hh",           // C/C++ headers
+        ".py", ".pyx",                         // Python
+        ".js", ".jsx", ".mjs",                 // JavaScript
+        ".ts", ".tsx",                         // TypeScript
+        ".java",                               // Java
+        ".cs",                                 // C#
+        ".go",                                 // Go
+        ".rs",                                 // Rust
+        ".php",                                // PHP
+        ".rb",                                 // Ruby
+        ".swift",                              // Swift
+        ".kt", ".kts",                         // Kotlin
+        ".scala",                              // Scala
+        ".m", ".mm",                           // Objective-C
+        ".dart",                               // Dart
+        ".lua",                                // Lua
+        ".r", ".R",                            // R
+        ".jl",                                 // Julia
+        ".hs",                                 // Haskell
+        ".ml", ".mli",                         // OCaml
+        ".fs", ".fsx",                         // F#
+        ".clj", ".cljs", ".cljc",             // Clojure
+        ".ex", ".exs",                         // Elixir
+        ".erl", ".hrl",                        // Erlang
+        ".vim",                                // Vim script
+        ".sh", ".bash", ".zsh",                // Shell scripts
+        ".ps1",                                // PowerShell
+        ".sql"                                 // SQL
+    };
+    
+    return sourceExtensions.count(ext) > 0;
+}
+
+
 }
