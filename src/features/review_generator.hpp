@@ -7,9 +7,6 @@
 
 namespace vit::features {
 
-/**
- * Generates AI-powered code reviews for uncommitted changes
- */
 class ReviewGenerator {
 public:
     explicit ReviewGenerator(std::unique_ptr<vit::ai::AIClient> aiClient);
@@ -60,4 +57,4 @@ private:
     std::string getCurrentTimestamp();
 };
 
-} // namespace vit::features 
+} 

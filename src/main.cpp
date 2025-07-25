@@ -14,6 +14,7 @@
 #include "utils/file_utils.hpp"
 #include "features/interactive_review.hpp"
 #include "features/review_generator.hpp"
+#include "features/commit_splitter.hpp"
 
 
 bool handleInit() {
@@ -320,6 +321,50 @@ bool handleCommit(int argc, char *argv[]) {
     return true;
 }
 
+bool handleSplitCommit(int argc, char *argv[]) {
+    if (argc < 3) {
+        std::cerr << "Usage: split-commit -m <default-message>\n";
+        return false;
+    }
+    
+    std::string message = argv[3];
+    std::string commitHash = readHead();
+
+    std::unique_ptr<vit::ai::AIClient> client;
+    client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
+    if (!client) {
+        std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
+        return false;
+    }
+
+    vit::features::CommitSplitter commitSplitter(std::move(client));
+    auto result = commitSplitter.analyzeAndSuggestSplits(commitHash, message);
+
+    if (!result.success) {
+        std::cerr << "Failed to split commit: " << result.error << "\n";
+        return false;
+    }
+
+    // Dry run first
+    std::cout << "Dry run:\n";
+    commitSplitter.executeSplits(result, true);
+    
+    std::cout << "Proceed with splits? (y/n): ";
+    std::string input;
+    std::cin >> input;
+    if (input != "y") {
+        std::cout << "Commit split cancelled.\n";
+        return false;
+    }
+
+    // Commit the splits
+    commitSplitter.executeSplits(result, false);
+
+    std::cout << "Commit split complete.\n";
+    return true;
+}
+
+
 bool handleShowHead() {
     std::string headHash = readHead();
     if (headHash.empty()) {
@@ -506,6 +551,8 @@ int main(int argc, char *argv[]) {
         success = handleCommitTree(argc, argv);
     } else if (command == "commit") {
         success = handleCommit(argc, argv);
+    } else if (command == "split-commit") {
+        success = handleSplitCommit(argc, argv);
     } else if (command == "show-head") {
         success = handleShowHead();
     } else if (command == "log") {
