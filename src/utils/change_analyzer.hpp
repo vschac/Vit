@@ -5,9 +5,11 @@
 #include <vector>
 #include <unordered_map>
 #include <filesystem>
+#include "../ai/openai_client.hpp"
 
 namespace vit::utils {
 
+// This class is used in place of creating a staging area
 class ChangeAnalyzer {
 public:
     enum class ChangeType {
@@ -21,37 +23,27 @@ public:
         ChangeType changeType;
         std::string oldContent;
         std::string newContent;
-        size_t oldSize;
-        size_t newSize;
         
         FileChange(const std::string& path, ChangeType type) 
-            : filePath(path), changeType(type), oldSize(0), newSize(0) {}
-        
-        size_t totalSize() const {
-            return oldSize + newSize;
-        }
+            : filePath(path), changeType(type) {}
     };
 
+    // contains all the info for every changed file in the working directory
     struct AnalysisResult {
         std::vector<FileChange> changes;
         size_t totalFilesAnalyzed;
         size_t sourceFilesChanged;
-        size_t totalContentSize;
-        bool withinAILimits;
         
         bool hasChanges() const { return !changes.empty(); }
     };
 
+    explicit ChangeAnalyzer(std::shared_ptr<vit::ai::AIClient> aiClient);
 
     AnalysisResult analyzeChanges(const std::string& commitHash = "", bool sourceOnly = true);
 
-    bool hasAnyChanges(const std::string& commitHash = "");
-
 private:
-    static constexpr size_t MAX_FILE_SIZE = 50000;
-    static constexpr size_t MAX_TOTAL_SIZE = 200000;
-    static constexpr size_t MAX_FILES = 10;
-    
+    std::shared_ptr<vit::ai::AIClient> aiClient_;
+
     std::string getFileContentFromCommit(const std::string& filePath, const std::string& treeHash);
     std::unordered_map<std::string, std::string> getCommitFileMap(const std::string& treeHash);
     std::vector<std::string> getWorkingDirectoryFiles();
@@ -60,7 +52,6 @@ private:
     void collectTreeFileMap(const std::string& treeHash, const std::string& basePath, 
                            std::unordered_map<std::string, std::string>& fileMap);
     std::string normalizeFilePath(const std::string& path);
-    bool shouldAnalyzeFile(const std::string& filePath, size_t contentSize);
 };
 
 } 

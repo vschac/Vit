@@ -9,8 +9,8 @@ using json = nlohmann::json;
 
 namespace vit::features {
 
-CommitSplitter::CommitSplitter(std::unique_ptr<vit::ai::AIClient> aiClient) 
-    : aiClient_(std::move(aiClient)) {}
+CommitSplitter::CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient) 
+    : aiClient_(aiClient), changeAnalyzer_(aiClient) {}
 
 CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::string& commitHash, 
                                                                    const std::string& fallbackMessage) {
@@ -23,24 +23,6 @@ CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::s
         }
         
         std::cout << "Analyzing " << analysisResult.sourceFilesChanged << " changed file(s)...\n";
-        
-        // Check if within AI limits
-        if (!analysisResult.withinAILimits) {
-            std::cout << "Warning: Changes exceed AI analysis limits (size: " 
-                      << analysisResult.totalContentSize << " bytes, files: " 
-                      << analysisResult.changes.size() << ")\n";
-            
-            // Create fallback single commit
-            CommitGroup fallbackGroup(fallbackMessage);
-            for (const auto& change : analysisResult.changes) {
-                fallbackGroup.filePaths.push_back(change.filePath);
-            }
-            fallbackGroup.description = "Multiple file changes (too large for AI analysis)";
-            fallbackGroup.category = "feat";
-            
-            return SplitResult::Success({fallbackGroup}, analysisResult.totalFilesAnalyzed, 
-                                      analysisResult.sourceFilesChanged);
-        }
         
         // Send to AI for analysis
         auto messages = createAnalysisPrompt(analysisResult.changes);

@@ -8,14 +8,16 @@ namespace vit::ai {
 class OpenAIClient : public AIClient {
 public:
 
-    struct Config {
-        std::string apiKey;
-        std::string baseUrl = "https://api.openai.com/v1";
-        std::string model = "gpt-3.5-turbo";
-        int maxTokens = 2000;
-        double temperature = 0.7;
-        int timeoutSeconds = 30;
-    };
+struct Config {
+    std::string apiKey;
+    std::string baseUrl = "https://api.openai.com/v1";
+    std::string model = "gpt-5-nano";
+    double temperature = 0.7;
+    int timeoutSeconds = 30;
+
+    Config(const std::string& apiKey) : apiKey(apiKey) {}
+
+};
 
     explicit OpenAIClient(const std::string& apiKey);
 

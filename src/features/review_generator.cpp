@@ -10,7 +10,8 @@
 namespace vit::features {
 
 ReviewGenerator::ReviewGenerator(std::unique_ptr<vit::ai::AIClient> aiClient) 
-    : aiClient_(std::move(aiClient)) {}
+    : aiClient_(std::move(aiClient)) {
+}
 
 ReviewGenerator::ReviewResult ReviewGenerator::generateReviewForFiles(const std::vector<std::string>& filePaths) {
     try {
@@ -18,29 +19,6 @@ ReviewGenerator::ReviewResult ReviewGenerator::generateReviewForFiles(const std:
         
         if (changes.empty()) {
             return ReviewResult::Error("No suitable files found for review");
-        }
-        
-        // Token validation
-        if (!validateTokenLimits(changes)) {
-            return ReviewResult::Error("Files too large for AI context window. Try fewer/smaller files.");
-        }
-        
-        // Size validation
-        size_t totalSize = 0;
-        for (const auto& change : changes) {
-            totalSize += change.fileSize;
-        }
-        
-        if (totalSize > MAX_TOTAL_SIZE) {
-            return ReviewResult::Error("Total file size too large (" + 
-                                     std::to_string(totalSize) + " bytes, max " + 
-                                     std::to_string(MAX_TOTAL_SIZE) + ")");
-        }
-        
-        if (changes.size() > MAX_FILES) {
-            return ReviewResult::Error("Too many files for review (" + 
-                                     std::to_string(changes.size()) + " files, max " + 
-                                     std::to_string(MAX_FILES) + ")");
         }
         
         std::cout << "Generating AI review for " << changes.size() << " file(s)...\n";
@@ -64,74 +42,32 @@ ReviewGenerator::ReviewResult ReviewGenerator::generateReviewForFiles(const std:
     }
 }
 
-// IMPLEMENT THE MISSING FUNCTIONS
 
-std::vector<ReviewGenerator::FileChange> ReviewGenerator::analyzeWorkingDirectory() {
-    std::vector<FileChange> changes;
-    
-    // Get all files in working directory (using existing vit function)
-    auto workingFiles = getWorkingDirectoryFiles(".");
-    
-    for (const auto& filePath : workingFiles) {
-        if (!shouldProcessFile(filePath)) {
-            continue;
-        }
-        
-        try {
-            std::string content = vit::utils::FileUtils::readFile(filePath);
-            size_t fileSize = content.size();
-            
-            // Skip empty files or files that are too large
-            if (fileSize == 0 || fileSize > MAX_FILE_SIZE) {
-                continue;
-            }
-            
-            FileChange change;
-            change.filePath = filePath;
-            change.content = content;
-            change.fileSize = fileSize;
-            change.changeDescription = "Modified file";
-            
-            changes.push_back(change);
-            
-        } catch (const std::exception& e) {
-            std::cerr << "Warning: Could not read file " << filePath << ": " << e.what() << std::endl;
-            continue;
-        }
-    }
-    
-    return changes;
-}
 
-std::vector<ReviewGenerator::FileChange> ReviewGenerator::analyzeSpecificFiles(const std::vector<std::string>& filePaths) {
+std::vector<ReviewGenerator::FileChange> ReviewGenerator::analyzeSpecificFiles(
+    const std::vector<std::string>& filePaths) {
+    
     std::vector<FileChange> changes;
+    size_t currentTokens = 0;  // Track accumulated tokens
     
     for (const auto& filePath : filePaths) {
         if (!shouldProcessFile(filePath)) {
-            std::cout << "Skipping " << filePath << " (not a source file or too large)\n";
+            std::cout << "Skipping " << filePath << " (not a source file)\n";
             continue;
         }
         
         try {
             std::string content = vit::utils::FileUtils::readFile(filePath);
-            size_t fileSize = content.size();
-            
-            if (fileSize == 0 || fileSize > MAX_FILE_SIZE) {
-                std::cout << "Skipping " << filePath << " (empty or too large: " << fileSize << " bytes)\n";
-                continue;
-            }
             
             FileChange change;
             change.filePath = filePath;
             change.content = content;
-            change.fileSize = fileSize;
             change.changeDescription = "Modified file";
             
-            changes.push_back(change);
+            changes.push_back(std::move(change));
             
         } catch (const std::exception& e) {
             std::cerr << "Warning: Could not read file " << filePath << ": " << e.what() << std::endl;
-            continue;
         }
     }
     
@@ -190,31 +126,6 @@ bool ReviewGenerator::isSourceFile(const std::string& filePath) {
     };
     
     return sourceExtensions.count(ext) > 0;
-}
-
-size_t ReviewGenerator::estimateTokens(const std::string& text) {
-    // Conservative estimate: 1 token ≈ 3.5 characters for code
-    return text.size() / 3.5;
-}
-
-bool ReviewGenerator::validateTokenLimits(const std::vector<FileChange>& changes) {
-    size_t totalTokens = 0;
-    size_t promptOverhead = 700; // System + user prompt formatting
-    
-    for (const auto& change : changes) {
-        totalTokens += estimateTokens(change.content);
-        totalTokens += 50; // File header formatting overhead
-    }
-    
-    // Check against available input tokens (accounting for response space)
-    size_t maxInputTokens = 2096 - promptOverhead; // ~1400 tokens
-    
-    if (totalTokens > maxInputTokens) {
-        std::cerr << "Token limit exceeded: " << totalTokens << " > " << maxInputTokens << std::endl;
-        return false;
-    }
-    
-    return true;
 }
 
 std::vector<vit::ai::AIClient::Message> ReviewGenerator::createReviewPrompt(const std::vector<FileChange>& changes) {
@@ -294,4 +205,4 @@ std::string ReviewGenerator::getCurrentTimestamp() {
     return ss.str();
 }
 
-} // namespace vit::features 
+}

@@ -10,10 +10,6 @@ namespace vit::features {
 
 CommentGenerator::CommentGenerator(std::unique_ptr<vit::ai::AIClient> aiClient) 
     : aiClient_(std::move(aiClient)) {
-    
-    if (!aiClient_ || !aiClient_->isAvailable()) {
-        throw std::runtime_error("AI client is not available");
-    }
 }
 
 CommentGenerator::CommentResult CommentGenerator::generateCommentsForFile(const std::string& filePath) {
@@ -33,13 +29,6 @@ CommentGenerator::CommentResult CommentGenerator::generateCommentsForFile(const 
     
     if (originalContent.empty()) {
         return CommentResult::Error("File is empty", fileName);
-    }
-    
-    // rough token estimation: 1 token ≈ 4 characters
-    size_t estimatedTokens = originalContent.size() / 4;
-    if (estimatedTokens > 6000) {
-        return CommentResult::Error("File too large for AI processing (estimated " + 
-                                   std::to_string(estimatedTokens) + " tokens)", fileName);
     }
     
     std::cout << "Generating comments for " << fileName << " using " << aiClient_->getProviderName() << "..." << std::endl;

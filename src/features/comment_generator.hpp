@@ -1,5 +1,6 @@
 #pragma once
 #include "../ai/ai_client.hpp"
+#include "../ai/openai_client.hpp"
 #include <string>
 #include <vector>
 #include <memory>
