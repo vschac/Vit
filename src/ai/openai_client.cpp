@@ -107,8 +107,7 @@ AIClient::GenerationResult OpenAIClient::makeRequest(const std::vector<Message>&
 
 std::string OpenAIClient::createJsonPayload(const std::vector<Message>& messages) {
     json payload = {
-        {"model", pImpl_->config.model},
-        {"temperature", pImpl_->config.temperature}
+        {"model", pImpl_->config.model}
     };
 
     json messagesJson = json::array();
@@ -153,9 +152,7 @@ AIClient::GenerationResult OpenAIClient::parseResponse(const std::string& jsonRe
 
 bool OpenAIClient::validateConfig() const {
     return !pImpl_->config.apiKey.empty() && 
-           !pImpl_->config.model.empty() && 
-           pImpl_->config.temperature >= 0.0 && 
-           pImpl_->config.temperature <= 1.0;
+           !pImpl_->config.model.empty();
 }
 
 }

@@ -64,12 +64,10 @@ private:
     
     // Commit execution
     bool createCommitFromGroup(const CommitGroup& group);
-    std::string createTreeFromFiles(const std::vector<std::string>& filePaths);
     bool validateCommitGroup(const CommitGroup& group);
     
     // Helper functions
     std::string formatFileChangesForAI(const std::vector<utils::ChangeAnalyzer::FileChange>& changes);
-    std::string truncateContent(const std::string& content, size_t maxLength = 2000);
     std::string getChangeTypeString(utils::ChangeAnalyzer::ChangeType type);
 };
 

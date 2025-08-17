@@ -42,8 +42,8 @@ ChangeAnalyzer::AnalysisResult ChangeAnalyzer::analyzeChanges(const std::string&
         throw std::runtime_error("Invalid commit: " + targetCommit);
     }
     
-    auto commitFiles = getCommitFileMap(commitInfo.treeHash);
-    auto workingFiles = getWorkingDirectoryFiles();
+    auto commitFiles = getCommitFileMap(commitInfo.treeHash); // these are the files from the last commit
+    auto workingFiles = getWorkingDirectoryFiles(); // these are the files that have (maybe) been changed since the last commit
 
     // create unified set of all file paths
     std::unordered_set<std::string> allPaths;

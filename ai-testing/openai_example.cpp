@@ -37,8 +37,7 @@ public:
             {"messages", {
                 {{"role", "user"}, {"content", prompt}}
             }},
-            {"max_tokens", 150},
-            {"temperature", 0.7}
+            {"max_tokens", 150}
         };
 
         std::string jsonStr = payload.dump();

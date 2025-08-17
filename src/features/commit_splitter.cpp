@@ -15,7 +15,6 @@ CommitSplitter::CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient)
 CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::string& commitHash, 
                                                                    const std::string& fallbackMessage) {
     try {
-        // Analyze file changes
         auto analysisResult = changeAnalyzer_.analyzeChanges(commitHash, true);  // Source files only
         
         if (!analysisResult.hasChanges()) {
@@ -24,7 +23,6 @@ CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::s
         
         std::cout << "Analyzing " << analysisResult.sourceFilesChanged << " changed file(s)...\n";
         
-        // Send to AI for analysis
         auto messages = createAnalysisPrompt(analysisResult.changes);
         auto future = aiClient_->generateResponse(messages);
         auto aiResult = future.get();
@@ -44,7 +42,6 @@ CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::s
                                       analysisResult.sourceFilesChanged);
         }
         
-        // Parse AI response
         return parseAIResponse(aiResult.content, analysisResult.changes);
         
     } catch (const std::exception& e) {
@@ -101,13 +98,13 @@ std::string CommitSplitter::formatFileChangesForAI(const std::vector<utils::Chan
         
         if (change.changeType == utils::ChangeAnalyzer::ChangeType::ADDED) {
             oss << "New file content:\n```\n" 
-                << truncateContent(change.newContent) << "\n```\n\n";
+                << change.newContent << "\n```\n\n";
         } else if (change.changeType == utils::ChangeAnalyzer::ChangeType::DELETED) {
             oss << "Deleted file content:\n```\n" 
-                << truncateContent(change.oldContent) << "\n```\n\n";
+                << change.oldContent << "\n```\n\n";
         } else if (change.changeType == utils::ChangeAnalyzer::ChangeType::MODIFIED) {
-            oss << "Before:\n```\n" << truncateContent(change.oldContent) << "\n```\n";
-            oss << "After:\n```\n" << truncateContent(change.newContent) << "\n```\n\n";
+            oss << "Before:\n```\n" << change.oldContent << "\n```\n";
+            oss << "After:\n```\n" << change.newContent << "\n```\n\n";
         }
     }
     
@@ -216,8 +213,7 @@ bool CommitSplitter::executeSplits(const SplitResult& splits, bool dryRun) {
 
 bool CommitSplitter::createCommitFromGroup(const CommitGroup& group) {
     try {
-        // Create tree from specified files
-        std::string treeHash = createTreeFromFiles(group.filePaths);
+        std::string treeHash = writeTree(".");
         if (treeHash.empty()) {
             std::cerr << "Failed to create tree for commit group" << std::endl;
             return false;
@@ -259,14 +255,6 @@ bool CommitSplitter::createCommitFromGroup(const CommitGroup& group) {
     }
 }
 
-std::string CommitSplitter::createTreeFromFiles(const std::vector<std::string>& filePaths) {
-    // For now, this is a simplified implementation that commits all files
-    // TODO: Implement selective tree creation based on specific file paths
-    // This would require building a tree structure with only the specified files
-    
-    return writeTree(".");  // Placeholder - commits everything
-}
-
 bool CommitSplitter::validateCommitGroup(const CommitGroup& group) {
     if (group.commitMessage.empty()) {
         return false;
@@ -285,14 +273,6 @@ bool CommitSplitter::validateCommitGroup(const CommitGroup& group) {
     }
     
     return true;
-}
-
-std::string CommitSplitter::truncateContent(const std::string& content, size_t maxLength) {
-    if (content.length() <= maxLength) {
-        return content;
-    }
-    
-    return content.substr(0, maxLength) + "\n... [truncated]";
 }
 
 std::string CommitSplitter::getChangeTypeString(utils::ChangeAnalyzer::ChangeType type) {
