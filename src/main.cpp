@@ -16,6 +16,29 @@
 #include "features/review_generator.hpp"
 #include "features/commit_splitter.hpp"
 
+struct VitConfig {
+    bool localAI = true;
+    std::string userName;
+    std::string userEmail;
+};
+
+VitConfig config;
+
+void persistConfig() {
+    std::ofstream configFile(".vitconfig");
+    configFile << config.localAI << '\n';
+    configFile << config.userName << '\n';
+    configFile << config.userEmail << '\n';
+    configFile.close();
+}
+
+void loadConfig() {
+    std::ifstream configFile(".vitconfig");
+    configFile >> config.localAI;
+    configFile >> config.userName;
+    configFile >> config.userEmail;
+    configFile.close();
+}
 
 bool handleInit() {
     try {
@@ -149,8 +172,8 @@ bool handleCommitTree(int argc, char *argv[]) {
     std::string parentHash = argv[4];  // -p flag
     std::string message = argv[6];     // -m flag
     
-    std::string author = "Vincent Schacknies";
-    std::string email = "vincent.schacknies@icloud.com";
+    std::string author = config.userName;
+    std::string email = config.userEmail;
 
     std::string commitHash = writeCommit(treeHash, parentHash, message, author, email);
     if (commitHash.empty()) {
@@ -189,6 +212,25 @@ ParsedArgs parseCommitArguments(int argc, char *argv[], int startIndex) {
     return args;
 }
 
+std::unique_ptr<vit::ai::AIClient> setupAI(bool localAI) {
+    std::unique_ptr<vit::ai::AIClient> client;
+    if (localAI) {
+        client = vit::ai::AI::createOllama();
+
+    } else {
+        client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
+    }
+    if (!client) {
+        if (localAI) {
+            std::cerr << "Failed to create local AI client.\n";
+        } else {
+            std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
+        }
+        return nullptr;
+    }
+    return client;
+}
+
 bool handleCommit(int argc, char *argv[]) {
     if (argc < 4) {
         std::cerr << "Usage: commit -m <message> [--add-comments] [--review] [file1 file2 ...]\n";
@@ -208,11 +250,7 @@ bool handleCommit(int argc, char *argv[]) {
     // Create AI client if needed
     std::unique_ptr<vit::ai::AIClient> client;
     if (args.generateReview || args.addComments) {
-        client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
-        if (!client) {
-            std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
-            return false;
-        }
+        client = setupAI(config.localAI);
     }
 
     // Determine target files
@@ -266,9 +304,7 @@ bool handleCommit(int argc, char *argv[]) {
     }
 
     // Handle --review (BEFORE commit)
-    if (args.generateReview) {
-        std::cout << "Generating AI review before commit...\n";
-        
+    if (args.generateReview) {        
         vit::features::ReviewGenerator reviewGenerator(std::move(client));
         auto reviewResult = reviewGenerator.generateReviewForFiles(files);
         
@@ -293,8 +329,8 @@ bool handleCommit(int argc, char *argv[]) {
     }
     
     std::string parentHash = readHead();
-    std::string author = "Vincent Schacknies";
-    std::string email = "vincent.schacknies@icloud.com";
+    std::string author = config.userName;
+    std::string email = config.userEmail;
     
     std::string commitHash = writeCommit(treeHash, parentHash, message, author, email);
     if (commitHash.empty()) {
@@ -330,14 +366,9 @@ bool handleSplitCommit(int argc, char *argv[]) {
     std::string message = argv[3];
     std::string commitHash = readHead();
 
-    std::unique_ptr<vit::ai::AIClient> client;
-    client = vit::ai::AI::createOpenAI(vit::ai::AI::getEnvVar("OPENAI_API_KEY"));
-    if (!client) {
-        std::cerr << "Failed to create AI client. Please set OPENAI_API_KEY environment variable.\n";
-        return false;
-    }
+    std::unique_ptr<vit::ai::AIClient> client = setupAI(config.localAI);
 
-    vit::features::CommitSplitter commitSplitter(std::move(client));
+    vit::features::CommitSplitter commitSplitter(std::move(client), config.userName, config.userEmail);
     auto result = commitSplitter.analyzeAndSuggestSplits(commitHash, message);
 
     if (!result.success) {
@@ -525,9 +556,39 @@ bool handleBranch(int argc, char *argv[]) {
     }
 }
 
+bool handleConfig(int argc, char *argv[]) {
+    if (argc < 3) {
+        std::cerr << "Usage: config <command>\n";
+        return false;
+    }
+
+    std::string command = argv[2];
+    if (command == "local-ai") {
+        config.localAI = true;
+    } else if (command == "api-ai") {
+        config.localAI = false;
+    }else if (command == "user-name") {
+        config.userName = argv[3];
+    } else if (command == "user-email") {
+        config.userEmail = argv[3];
+    } else if (command == "print") {
+        std::cout << "localAI: " << config.localAI << '\n';
+        std::cout << "userName: " << config.userName << '\n';
+        std::cout << "userEmail: " << config.userEmail << '\n';
+    } else {
+        std::cerr << "Unknown config command: " << command << '\n';
+        return false;
+    }
+
+    persistConfig();
+    return true;
+}
+
 int main(int argc, char *argv[]) {
     std::cout << std::unitbuf;
     std::cerr << std::unitbuf;
+
+    loadConfig();
 
     if (argc < 2) {
         std::cerr << "No command provided.\n";
@@ -563,7 +624,10 @@ int main(int argc, char *argv[]) {
         success = handleGC();
     } else if (command == "branch") {
         success = handleBranch(argc, argv);
-    } else {
+    } else if (command == "config") {
+        success = handleConfig(argc, argv);
+    }
+    else {
         std::cerr << "Unknown command " << command << '\n';
         return EXIT_FAILURE;
     }

@@ -32,7 +32,7 @@ struct Config {
 
 private:
     struct Impl; // forward declaration
-    std::unique_ptr<Impl> pImpl_; // pointer to the implementation to hide API key
+    std::unique_ptr<Impl> pImpl_; // pointer to the implementation to hide API key and curl details
 
     GenerationResult makeRequest(const std::vector<Message>& messages);
     std::string createJsonPayload(const std::vector<Message>& messages);

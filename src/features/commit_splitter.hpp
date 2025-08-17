@@ -37,7 +37,7 @@ public:
         bool shouldSplit() const { return success && groups.size() > 1; }
     };
 
-    explicit CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient);
+    explicit CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient, std::string userName, std::string userEmail);
     
     /**
      * Analyze changes and suggest commit splits
@@ -57,6 +57,9 @@ public:
 private:
     std::shared_ptr<vit::ai::AIClient> aiClient_;
     utils::ChangeAnalyzer changeAnalyzer_;
+
+    std::string userName;
+    std::string userEmail;
     
     // AI analysis
     std::vector<vit::ai::AIClient::Message> createAnalysisPrompt(const std::vector<utils::ChangeAnalyzer::FileChange>& changes);

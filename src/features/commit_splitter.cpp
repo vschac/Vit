@@ -9,8 +9,8 @@ using json = nlohmann::json;
 
 namespace vit::features {
 
-CommitSplitter::CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient) 
-    : aiClient_(aiClient), changeAnalyzer_(aiClient) {}
+CommitSplitter::CommitSplitter(std::shared_ptr<vit::ai::AIClient> aiClient, std::string userName, std::string userEmail) 
+    : aiClient_(aiClient), changeAnalyzer_(aiClient), userName(userName), userEmail(userEmail) {}
 
 CommitSplitter::SplitResult CommitSplitter::analyzeAndSuggestSplits(const std::string& commitHash, 
                                                                    const std::string& fallbackMessage) {
@@ -219,12 +219,10 @@ bool CommitSplitter::createCommitFromGroup(const CommitGroup& group) {
             return false;
         }
         
-        // Get parent commit
         std::string parentHash = readHead();
         
-        // Create commit
-        std::string author = "Vincent Schacknies";  // TODO: Make configurable
-        std::string email = "vincent.schacknies@icloud.com";
+        std::string author = userName;
+        std::string email = userEmail;
         
         std::string commitHash = writeCommit(treeHash, parentHash, group.commitMessage, author, email);
         if (commitHash.empty()) {

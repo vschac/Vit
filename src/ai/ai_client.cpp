@@ -1,6 +1,6 @@
 #include "ai_client.hpp"
 #include "openai_client.hpp"
-// #include "ollama_client.hpp"
+#include "ollama_client.hpp"
 #include <cstdlib>
 
 namespace vit::ai {
@@ -19,7 +19,12 @@ std::unique_ptr<AIClient> AI::createOpenAI(const std::string& apiKey) {
 }
 
 std::unique_ptr<AIClient> AI::createOllama(const std::string& baseUrl, const std::string& model) {
-    return nullptr;
+    try {
+        OllamaClient::Config config{baseUrl, model};
+        return std::make_unique<OllamaClient>(config);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
 }
 
 std::string AI::getEnvVar(const std::string& name) {
@@ -27,4 +32,4 @@ std::string AI::getEnvVar(const std::string& name) {
     return value ? std::string(value) : std::string();
 }
 
-} 
+}
