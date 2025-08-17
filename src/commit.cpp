@@ -16,12 +16,11 @@
 #include <openssl/sha.h>
 
 
-// ──────────────────────────  zlib helpers  ──────────────────────────
 std::string decompressObject(const std::string& compressed)
 {
     z_stream strm{};
-    strm.next_in   = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
-    strm.avail_in  = compressed.size();
+    strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(compressed.data()));
+    strm.avail_in = compressed.size();
 
     if (inflateInit(&strm) != Z_OK) {
         std::cerr << "inflateInit failed\n";
@@ -29,7 +28,7 @@ std::string decompressObject(const std::string& compressed)
     }
 
     std::string out;
-    char        buf[4096];
+    char buf[4096];
 
     int ret;
     do {
@@ -50,8 +49,6 @@ std::string decompressObject(const std::string& compressed)
 
 
 
-/* ──────────────────────────  Low-level helpers  ────────────────────────── */
-
 std::string hashToHexString(const unsigned char* hash)
 {
     std::ostringstream ss;
@@ -66,7 +63,7 @@ std::string hexStringToBinary(const std::string& hex)
     std::string bin;
     for (int i = 0; i < 20; ++i) {
         std::string byteStr = hex.substr(i * 2, 2);
-        char byte          = static_cast<char>(std::stoi(byteStr, nullptr, 16));
+        char byte = static_cast<char>(std::stoi(byteStr, nullptr, 16));
         bin += byte;
     }
     return bin;
@@ -87,7 +84,6 @@ std::string getObjectPath(const std::string& hash)
 }
 
 
-/* ──────────────────────────  object writers / readers  ────────────────────────── */
 
 std::string writeObject(const std::string& type, const std::string& content)
 {
@@ -117,11 +113,9 @@ std::string writeObject(const std::string& type, const std::string& content)
     return hash;
 }
 
-std::string writeBlob(const std::string& content)         { return writeObject("blob",  content); }
+std::string writeBlob(const std::string& content) { return writeObject("blob",  content); }
 std::string writeTree(const std::string& dirPath);
 
-
-/* ──────────────────────────  read helpers  ────────────────────────── */
 
 std::string readObject(const std::string& hash)
 {
@@ -137,13 +131,10 @@ std::string readObject(const std::string& hash)
 std::string readObjectContent(const std::string& hash)
 {
     const std::string decompressed = readObject(hash);
-    const auto nullPos             = decompressed.find('\0');
-    return nullPos == std::string::npos ? decompressed
-                                        : decompressed.substr(nullPos + 1);
+    const auto nullPos = decompressed.find('\0');
+    return nullPos == std::string::npos ? decompressed : decompressed.substr(nullPos + 1);
 }
 
-
-/* ──────────────────────────  tree handling  ────────────────────────── */
 
 std::string writeTree(const std::string& dirPath)
 {
@@ -193,13 +184,13 @@ std::vector<FileInfo> parseTree(const std::string& treeHash)
         if (nullPos == std::string::npos) break;
 
         const std::string header = content.substr(pos, nullPos - pos);
-        const size_t      spPos  = header.find_last_of(' ');
+        const size_t spPos = header.find_last_of(' ');
         if (spPos != std::string::npos) {
             FileInfo f;
             f.mode = header.substr(0, spPos);
             f.name = header.substr(spPos + 1);
             const std::string binHash = content.substr(nullPos + 1, 20);
-            f.hash        = binaryToHexString(binHash);
+            f.hash = binaryToHexString(binHash);
             f.isDirectory = f.mode.substr(0,3) == "400";
             files.push_back(f);
         }
@@ -268,7 +259,6 @@ bool restoreTreeOverwrite(const std::string& treeHash, const std::string& base)
 }
 
 
-/* ──────────────────────────  commit / HEAD primitives  ────────────────────────── */
 
 std::string writeCommit(const std::string& tree,
                         const std::string& parent,
@@ -306,7 +296,6 @@ bool writeHead(const std::string& hash)
 }
 
 
-/* ──────────────────────────  commit parsing / pretty helpers  ────────────────────────── */
 
 CommitInfo parseCommit(const std::string& commitHash)
 {
@@ -350,8 +339,6 @@ std::string formatTimestamp(const std::string& ts)
 }
 
 
-/* ──────────────────────────  working-dir helpers  ────────────────────────── */
-
 std::set<std::string> getWorkingDirectoryFiles(const std::string& path)
 {
     std::set<std::string> out;
@@ -366,8 +353,6 @@ std::set<std::string> getWorkingDirectoryFiles(const std::string& path)
 }
 
 
-/* ──────────────────────────  high-level ops  ────────────────────────── */
-
 bool safeCheckout(const std::string& commitHash)
 {
     const CommitInfo ci = parseCommit(commitHash);
@@ -378,7 +363,6 @@ bool safeCheckout(const std::string& commitHash)
 
     std::cout << "Checking out " << commitHash << " – " << ci.message << '\n';
 
-    // restore files
     if (!restoreTreeOverwrite(ci.treeHash)) return false;
 
     // clean untracked
@@ -397,8 +381,6 @@ bool safeCheckout(const std::string& commitHash)
     return true;
 }
 
-
-/* ──────────────────────────  reachability / refs  ────────────────────────── */
 
 std::vector<std::string> findAllCommitHashes()
 {
@@ -423,7 +405,7 @@ std::vector<std::string> getReachableCommits(const std::vector<std::string>& sta
 {
     std::vector<std::string> order;
     std::unordered_set<std::string> vis;
-    std::queue<std::string> q;
+    std::queue<std::string> q; // queue for BFS
 
     for (const auto& h : start) if (!h.empty() && vis.insert(h).second) q.push(h);
 

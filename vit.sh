@@ -1,11 +1,13 @@
 #!/bin/sh
+# vit.sh - Run vit without rebuilding
 
-set -e # Exit early if any commands fail
+set -e
 
-(
-  cd "$(dirname "$0")" # Ensure compile steps are run within the repository directory
-  cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake
-  cmake --build ./build
-)
+# Check if binary exists
+if [ ! -f "$(dirname "$0")/build/vit" ]; then
+    echo "Vit not built yet. Please run: ./install.sh"
+    exit 1
+fi
 
-exec $(dirname "$0")/build/vit "$@"
+# Just run the binary
+exec "$(dirname "$0")/build/vit" "$@"

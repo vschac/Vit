@@ -35,8 +35,6 @@ public:
     
     std::vector<CommentResult> generateCommentsForFiles(const std::vector<std::string>& filePaths);
     
-    static bool shouldProcessFile(const std::string& filePath);
-
     std::string stripMarkdownFormatting(const std::string& response);
 
 private:

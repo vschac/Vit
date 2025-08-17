@@ -40,7 +40,6 @@ private:
     
     std::vector<FileChange> analyzeSpecificFiles(const std::vector<std::string>& filePaths);
     bool shouldProcessFile(const std::string& filePath);
-    bool isSourceFile(const std::string& filePath);
     std::vector<vit::ai::AIClient::Message> createReviewPrompt(const std::vector<FileChange>& changes);
     std::string formatReviewContent(const std::string& aiResponse);
     std::string getCurrentTimestamp();

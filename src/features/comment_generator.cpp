@@ -16,7 +16,7 @@ CommentGenerator::CommentResult CommentGenerator::generateCommentsForFile(const 
     std::string fileName = filePath;  // Keep full path for writing
     std::string displayName = filePath.substr(filePath.find_last_of("/\\") + 1);  // Just for display
     
-    if (!shouldProcessFile(filePath)) {
+    if (!vit::utils::FileUtils::isSourceFile(filePath)) {
         return CommentResult::Error("File type not suitable for comment generation", fileName);
     }
     
@@ -66,50 +66,6 @@ std::vector<CommentGenerator::CommentResult> CommentGenerator::generateCommentsF
     }
     
     return results;
-}
-
-bool CommentGenerator::shouldProcessFile(const std::string& filePath) {
-    if (!vit::utils::FileUtils::fileExists(filePath)) {
-        return false;
-    }
-    
-    std::string ext = vit::utils::FileUtils::getFileExtension(filePath);
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-    
-    // Common source code file extensions
-    static const std::set<std::string> sourceExtensions = {
-        ".cpp", ".cxx", ".cc", ".c",           // C/C++
-        ".hpp", ".hxx", ".h", ".hh",           // C/C++ headers
-        ".py", ".pyx",                         // Python
-        ".js", ".jsx", ".mjs",                 // JavaScript
-        ".ts", ".tsx",                         // TypeScript
-        ".java",                               // Java
-        ".cs",                                 // C#
-        ".go",                                 // Go
-        ".rs",                                 // Rust
-        ".php",                                // PHP
-        ".rb",                                 // Ruby
-        ".swift",                              // Swift
-        ".kt", ".kts",                         // Kotlin
-        ".scala",                              // Scala
-        ".m", ".mm",                           // Objective-C
-        ".dart",                               // Dart
-        ".lua",                                // Lua
-        ".r", ".R",                            // R
-        ".jl",                                 // Julia
-        ".hs",                                 // Haskell
-        ".ml", ".mli",                         // OCaml
-        ".fs", ".fsx",                         // F#
-        ".clj", ".cljs", ".cljc",             // Clojure
-        ".ex", ".exs",                         // Elixir
-        ".erl", ".hrl",                        // Erlang
-        ".vim",                                // Vim script
-        ".sh", ".bash", ".zsh",                // Shell scripts
-        ".ps1",                                // PowerShell
-        ".sql"                                 // SQL
-    };
-    
-    return sourceExtensions.count(ext) > 0;
 }
 
 std::vector<vit::ai::AIClient::Message> CommentGenerator::createCommentPrompt(const std::string& fileContent, const std::string& fileName) {
